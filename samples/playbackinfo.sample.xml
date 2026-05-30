@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Info>
+  <CurrentTrack>
+    <TRACK
+      ARTIST="Tulus"
+      TITLE="Hati-Hati di Jalan"
+      ALBUM="Manusia"
+      CASTTITLE="Tulus - Hati-Hati di Jalan"
+      DURATION="04:02"
+    />
+  </CurrentTrack>
+  <Playback
+    pos="30000"
+    len="242000"
+    state="play"
+    playlistpos="1"
+    streams="1"
+    volume="83"
+  />
+  <NextTrack>
+    <TRACK
+      ARTIST="Sheila on 7"
+      TITLE="Dan"
+      ALBUM="Kisah Klasik"
+      CASTTITLE="Sheila on 7 - Dan"
+      DURATION="04:30"
+    />
+  </NextTrack>
+</Info>

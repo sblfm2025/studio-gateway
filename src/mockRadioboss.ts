@@ -1,39 +1,42 @@
 import * as http from 'http';
 import * as url from 'url';
 
-const PORT = 9001;
+const PORT = 9100; // Menggunakan port 9100 untuk mock agar tidak tabrakan dengan RadioBOSS asli di 9001
 
-// Simulasi daftar putar lagu untuk RadioBOSS
+// Daftar putar lagu simulasi representatif dengan metadata lengkap
 const playlist = [
   {
     artist: 'Tulus',
     title: 'Hati-Hati di Jalan',
     album: 'Manusia',
-    durationMs: 90000 // 90 detik untuk demo cepat
+    castTitle: 'Tulus - Hati-Hati di Jalan',
+    durationMs: 90000 // 90 detik durasi demo cepat
   },
   {
     artist: 'Sheila on 7',
     title: 'Dan',
     album: 'Kisah Klasik Untuk Masa Depan',
+    castTitle: 'Sheila on 7 - Dan',
     durationMs: 120000 // 120 detik
   },
   {
     artist: 'Joko in Berlin',
     title: 'Senapan',
     album: 'Senapan - Single',
+    castTitle: 'Joko in Berlin - Senapan',
     durationMs: 80000 // 80 detik
   }
 ];
 
 let currentTrackIndex = 0;
-let currentPosMs = 0;
-let playerState = 'play'; // play, pause, stop
+let currentPosMs = 30000; // Mulai posisi di detik 30
+let playerState = 'play';
 
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url || '', true);
   const query = parsedUrl.query;
 
-  // Respons untuk path root dengan aksi ?action=playbackinfo
+  // Hanya layani request dengan action=playbackinfo
   if (query.action === 'playbackinfo') {
     const password = query.pass;
     console.log(`[Mock RadioBOSS] Menerima request API playbackinfo. Pass: "${password}"`);
@@ -42,15 +45,34 @@ const server = http.createServer((req, res) => {
     const nextTrackIndex = (currentTrackIndex + 1) % playlist.length;
     const nextTrack = playlist[nextTrackIndex];
 
-    // Buat respons XML dinamis
+    // Buat respons XML representatif sesuai arahan teknis
     const xmlResponse = `<?xml version="1.0" encoding="utf-8"?>
 <Info>
-  <Playback state="${playerState}" pos="${currentPosMs}" len="${currentTrack.durationMs}" />
   <CurrentTrack>
-    <TRACK ARTIST="${currentTrack.artist}" TITLE="${currentTrack.title}" ALBUM="${currentTrack.album}" FILENAME="C:\\MockMusic\\${currentTrack.artist} - ${currentTrack.title}.mp3" />
+    <TRACK
+      ARTIST="${currentTrack.artist}"
+      TITLE="${currentTrack.title}"
+      ALBUM="${currentTrack.album}"
+      CASTTITLE="${currentTrack.castTitle}"
+      DURATION="04:02"
+    />
   </CurrentTrack>
+  <Playback
+    pos="${currentPosMs}"
+    len="${currentTrack.durationMs}"
+    state="${playerState}"
+    playlistpos="1"
+    streams="1"
+    volume="83"
+  />
   <NextTrack>
-    <TRACK ARTIST="${nextTrack.artist}" TITLE="${nextTrack.title}" ALBUM="${nextTrack.album}" FILENAME="C:\\MockMusic\\${nextTrack.artist} - ${nextTrack.title}.mp3" />
+    <TRACK
+      ARTIST="${nextTrack.artist}"
+      TITLE="${nextTrack.title}"
+      ALBUM="${nextTrack.album}"
+      CASTTITLE="${nextTrack.castTitle}"
+      DURATION="04:30"
+    />
   </NextTrack>
 </Info>`;
 
@@ -68,17 +90,19 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' });
     res.end(xmlResponse);
   } else {
-    // Jalur default jika parameter tidak sesuai
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Mock RadioBOSS API Server. Gunakan ?pass=PASSWORD&action=playbackinfo');
+    // Return error 400 jika parameter action tidak valid atau bukan playbackinfo
+    console.warn(`[Mock RadioBOSS] Request ditolak. Aksi "${query.action}" tidak didukung.`);
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('ERR_INVALID_ACTION: Hanya mendukung parameter ?action=playbackinfo');
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log('==================================================');
-  console.log(`   Mock RadioBOSS API Server berjalan di:        `);
-  console.log(`   http://127.0.0.1:${PORT}                      `);
+  console.log('   MOCK API SERVER RADIOBOSS AKTIF BERJALAN       ');
+  console.log(`   Lokasi API: http://127.0.0.1:${PORT}          `);
+  console.log('   Menerima parameter: ?pass=PASS&action=playbackinfo');
   console.log('==================================================');
-  console.log('Simulasi lagu berganti otomatis aktif ketika dipolling.');
-  console.log('Tekan Ctrl+C untuk menghentikan server.');
+  console.log('Simulasi kemajuan trek dan rotasi lagu otomatis aktif.');
+  console.log('Tekan Ctrl+C untuk menghentikan server tiruan.');
 });
