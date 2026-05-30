@@ -1,5 +1,9 @@
-import { useState, useEffect } from 'react';
-import { subscribeToNowPlaying, subscribeToGatewayHeartbeat, RadioBossNowPlaying } from './radiobossNowPlaying.service';
+import { useState, useEffect } from "react";
+import {
+  subscribeToNowPlaying,
+  subscribeToGatewayHeartbeat,
+  RadioBossNowPlaying,
+} from "./radiobossNowPlaying.service";
 
 // Definisikan tipe untuk State Hook
 export interface UseNowPlayingResult {
@@ -8,7 +12,7 @@ export interface UseNowPlayingResult {
   nextArtist?: string;
   nextTitle?: string;
   progressPercent: number;
-  isLive: boolean;          // true jika data sinkronisasi valid dan gateway online
+  isLive: boolean; // true jika data sinkronisasi valid dan gateway online
   isLoading: boolean;
 }
 
@@ -18,8 +22,13 @@ export interface UseNowPlayingResult {
  * @param db Objek Firestore (db) dari firebaseConfig
  * @param gatewayId ID unik gateway (misal: 'studio-main')
  */
-export function useRadioBossNowPlaying(db: any, gatewayId = 'studio-main'): UseNowPlayingResult {
-  const [nowPlaying, setNowPlaying] = useState<RadioBossNowPlaying | null>(null);
+export function useRadioBossNowPlaying(
+  db: any,
+  gatewayId = "studio-main",
+): UseNowPlayingResult {
+  const [nowPlaying, setNowPlaying] = useState<RadioBossNowPlaying | null>(
+    null,
+  );
   const [isGatewayOnline, setIsGatewayOnline] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -35,28 +44,35 @@ export function useRadioBossNowPlaying(db: any, gatewayId = 'studio-main'): UseN
     });
 
     // 2. Subscribe ke Heartbeat Gateway untuk pengecekan keaktifan yang fail-safe
-    const unsubscribeHeartbeat = subscribeToGatewayHeartbeat(db, gatewayId, (heartbeat) => {
-      if (!heartbeat) {
-        setIsGatewayOnline(false);
-        return;
-      }
-
-      // Validasi detak jantung: jika lastSeenAt > 90 detik, anggap gateway offline!
-      const lastSeen = heartbeat.lastSeenAt;
-      if (lastSeen) {
-        // Mendukung konversi Timestamp Firestore maupun Date biasa
-        const lastSeenMs = typeof lastSeen.toMillis === 'function' ? lastSeen.toMillis() : new Date(lastSeen).getTime();
-        const secondsElapsed = (Date.now() - lastSeenMs) / 1000;
-        
-        if (secondsElapsed > 90 || heartbeat.status === 'offline') {
+    const unsubscribeHeartbeat = subscribeToGatewayHeartbeat(
+      db,
+      gatewayId,
+      (heartbeat) => {
+        if (!heartbeat) {
           setIsGatewayOnline(false);
-        } else {
-          setIsGatewayOnline(true);
+          return;
         }
-      } else {
-        setIsGatewayOnline(false);
-      }
-    });
+
+        // Validasi detak jantung: jika lastSeenAt > 90 detik, anggap gateway offline!
+        const lastSeen = heartbeat.lastSeenAt;
+        if (lastSeen) {
+          // Mendukung konversi Timestamp Firestore maupun Date biasa
+          const lastSeenMs =
+            typeof lastSeen.toMillis === "function"
+              ? lastSeen.toMillis()
+              : new Date(lastSeen).getTime();
+          const secondsElapsed = (Date.now() - lastSeenMs) / 1000;
+
+          if (secondsElapsed > 90 || heartbeat.status === "offline") {
+            setIsGatewayOnline(false);
+          } else {
+            setIsGatewayOnline(true);
+          }
+        } else {
+          setIsGatewayOnline(false);
+        }
+      },
+    );
 
     return () => {
       unsubscribeNowPlaying();
@@ -68,36 +84,38 @@ export function useRadioBossNowPlaying(db: any, gatewayId = 'studio-main'): UseN
   // Jika sedang memuat data pertama kali
   if (isLoading) {
     return {
-      artist: '',
-      title: 'Memuat...',
+      artist: "",
+      title: "Memuat...",
       progressPercent: 0,
       isLive: false,
-      isLoading: true
+      isLoading: true,
     };
   }
 
   // Jika gateway terdeteksi offline / terputus atau data kosong
   if (!isGatewayOnline || !nowPlaying) {
     return {
-      artist: '',
-      title: 'Radio SBL Live',
+      artist: "",
+      title: "Radio SBL Live",
       progressPercent: 0,
       isLive: false,
-      isLoading: false
+      isLoading: false,
     };
   }
 
   // Cek apakah metadata valid
-  const isTitleEmpty = !nowPlaying.title || nowPlaying.title.trim() === '';
-  const isFallbackOnly = nowPlaying.title === 'Radio SBL Live' && (!nowPlaying.artist || nowPlaying.artist.trim() === '');
+  const isTitleEmpty = !nowPlaying.title || nowPlaying.title.trim() === "";
+  const isFallbackOnly =
+    nowPlaying.title === "Radio SBL Live" &&
+    (!nowPlaying.artist || nowPlaying.artist.trim() === "");
 
   if (isTitleEmpty || isFallbackOnly) {
     return {
-      artist: '',
-      title: 'Radio SBL Live',
+      artist: "",
+      title: "Radio SBL Live",
       progressPercent: 0,
       isLive: false,
-      isLoading: false
+      isLoading: false,
     };
   }
 
@@ -109,6 +127,6 @@ export function useRadioBossNowPlaying(db: any, gatewayId = 'studio-main'): UseN
     nextTitle: nowPlaying.nextTitle || undefined,
     progressPercent: nowPlaying.progressPercent || 0,
     isLive: true,
-    isLoading: false
+    isLoading: false,
   };
 }

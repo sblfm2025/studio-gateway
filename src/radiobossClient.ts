@@ -1,5 +1,5 @@
-import dotenv from 'dotenv';
-import { Logger } from './logger';
+import dotenv from "dotenv";
+import { Logger } from "./logger";
 
 dotenv.config();
 
@@ -9,9 +9,11 @@ const apiPassword = process.env.RADIOBOSS_API_PASSWORD;
 // Validasi Konfigurasi Startup Klien RadioBOSS
 if (!apiUrlRaw || !apiPassword) {
   const missing = [];
-  if (!apiUrlRaw) missing.push('RADIOBOSS_API_URL');
-  if (!apiPassword) missing.push('RADIOBOSS_API_PASSWORD');
-  Logger.error(`[Config] Gagal memulai agen. Variabel berikut wajib terisi di .env: ${missing.join(', ')}`);
+  if (!apiUrlRaw) missing.push("RADIOBOSS_API_URL");
+  if (!apiPassword) missing.push("RADIOBOSS_API_PASSWORD");
+  Logger.error(
+    `[Config] Gagal memulai agen. Variabel berikut wajib terisi di .env: ${missing.join(", ")}`,
+  );
   process.exit(1);
 }
 
@@ -19,7 +21,9 @@ if (!apiUrlRaw || !apiPassword) {
 try {
   new URL(apiUrlRaw);
 } catch (err) {
-  Logger.error(`[Config] Format RADIOBOSS_API_URL tidak valid: "${apiUrlRaw}". Harap gunakan format seperti http://127.0.0.1:9001`);
+  Logger.error(
+    `[Config] Format RADIOBOSS_API_URL tidak valid: "${apiUrlRaw}". Harap gunakan format seperti http://127.0.0.1:9001`,
+  );
   process.exit(1);
 }
 
@@ -38,26 +42,28 @@ const timeoutMs = getTimeoutMs();
 export async function fetchPlaybackInfoFromRadioBoss(): Promise<string> {
   const url = new URL(apiUrlRaw!);
   // Encode parameter URL secara aman menggunakan URLSearchParams
-  url.searchParams.set('pass', apiPassword!);
-  url.searchParams.set('action', 'playbackinfo');
+  url.searchParams.set("pass", apiPassword!);
+  url.searchParams.set("action", "playbackinfo");
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(url.toString(), {
-      signal: controller.signal
+      signal: controller.signal,
     });
-    
+
     if (!response.ok) {
       throw new Error(`RadioBOSS API HTTP error! status: ${response.status}`);
     }
-    
+
     const text = await response.text();
     return text;
   } catch (error: any) {
-    if (error.name === 'AbortError') {
-      throw new Error(`Koneksi ke RadioBOSS API melampaui batas waktu (${timeoutMs / 1000} detik).`);
+    if (error.name === "AbortError") {
+      throw new Error(
+        `Koneksi ke RadioBOSS API melampaui batas waktu (${timeoutMs / 1000} detik).`,
+      );
     }
     throw error;
   } finally {

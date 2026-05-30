@@ -1,21 +1,24 @@
-import { RadioBossPlaybackInfo, NormalizedPlayback } from './types';
+import { RadioBossPlaybackInfo, NormalizedPlayback } from "./types";
 
 // Fungsi sanitasi teks: hapus karakter kontrol, trim, dan batasi panjang karakter
 export function cleanText(value: unknown, maxLength = 160): string {
-  if (value === null || value === undefined) return '';
-  const textStr = typeof value === 'string' ? value : String(value);
+  if (value === null || value === undefined) return "";
+  const textStr = typeof value === "string" ? value : String(value);
   return textStr
-    .replace(/[\u0000-\u001F\u007F]/g, '') // Hapus karakter kontrol ASCII
+    .replace(/[\u0000-\u001F\u007F]/g, "") // Hapus karakter kontrol ASCII
     .trim()
     .slice(0, maxLength);
 }
 
 // Fungsi memecah CASTTITLE secara cerdas dengan berbagai pembatas standar
-export function splitCastTitle(castTitle?: string): { artist: string; title: string } {
-  if (!castTitle) return { artist: '', title: '' };
+export function splitCastTitle(castTitle?: string): {
+  artist: string;
+  title: string;
+} {
+  if (!castTitle) return { artist: "", title: "" };
 
   const normalized = castTitle.trim();
-  const separators = [' - ', ' – ', ' — ', ' | '];
+  const separators = [" - ", " – ", " — ", " | "];
 
   for (const sep of separators) {
     if (normalized.includes(sep)) {
@@ -27,8 +30,8 @@ export function splitCastTitle(castTitle?: string): { artist: string; title: str
   }
 
   return {
-    artist: '',
-    title: normalized
+    artist: "",
+    title: normalized,
   };
 }
 
@@ -36,7 +39,7 @@ export function splitCastTitle(castTitle?: string): { artist: string; title: str
 export function parseDurationToSeconds(value?: string): number | undefined {
   if (!value) return undefined;
 
-  const parts = value.split(':').map(Number);
+  const parts = value.split(":").map(Number);
   if (parts.some((n) => !Number.isFinite(n) || isNaN(n))) return undefined;
 
   if (parts.length === 2) {
@@ -52,17 +55,21 @@ export function parseDurationToSeconds(value?: string): number | undefined {
   return undefined;
 }
 
-export function normalizePlayback(playback: RadioBossPlaybackInfo): NormalizedPlayback {
+export function normalizePlayback(
+  playback: RadioBossPlaybackInfo,
+): NormalizedPlayback {
   // 1. Normalisasi playerState
-  const playbackStateRaw = String(playback.Playback?.state || 'stop').toLowerCase();
-  let playerState: 'playing' | 'paused' | 'stopped' | 'unknown' = 'unknown';
-  
-  if (playbackStateRaw === 'play' || playbackStateRaw === 'playing') {
-    playerState = 'playing';
-  } else if (playbackStateRaw === 'pause' || playbackStateRaw === 'paused') {
-    playerState = 'paused';
-  } else if (playbackStateRaw === 'stop' || playbackStateRaw === 'stopped') {
-    playerState = 'stopped';
+  const playbackStateRaw = String(
+    playback.Playback?.state || "stop",
+  ).toLowerCase();
+  let playerState: "playing" | "paused" | "stopped" | "unknown" = "unknown";
+
+  if (playbackStateRaw === "play" || playbackStateRaw === "playing") {
+    playerState = "playing";
+  } else if (playbackStateRaw === "pause" || playbackStateRaw === "paused") {
+    playerState = "paused";
+  } else if (playbackStateRaw === "stop" || playbackStateRaw === "stopped") {
+    playerState = "stopped";
   }
 
   // 2. Mengambil metadata CurrentTrack & NextTrack
@@ -70,9 +77,15 @@ export function normalizePlayback(playback: RadioBossPlaybackInfo): NormalizedPl
   const nextTrack = playback.NextTrack?.TRACK || {};
 
   // -- Current Track Metadata Resolution Hierarchy --
-  let currentArtist = cleanText(currentTrack.ARTIST || currentTrack.artist, 160);
+  let currentArtist = cleanText(
+    currentTrack.ARTIST || currentTrack.artist,
+    160,
+  );
   let currentTitle = cleanText(currentTrack.TITLE || currentTrack.title, 160);
-  const currentCastTitle = cleanText(currentTrack.CASTTITLE || currentTrack.casttitle, 240);
+  const currentCastTitle = cleanText(
+    currentTrack.CASTTITLE || currentTrack.casttitle,
+    240,
+  );
   const currentAlbum = cleanText(currentTrack.ALBUM || currentTrack.album, 160);
 
   // Jika artist/title kosong, cek CASTTITLE
@@ -84,14 +97,17 @@ export function normalizePlayback(playback: RadioBossPlaybackInfo): NormalizedPl
 
   // Fallback utama jika tetap kosong
   if (!currentArtist && !currentTitle) {
-    currentArtist = '';
-    currentTitle = 'Radio SBL Live';
+    currentArtist = "";
+    currentTitle = "Radio SBL Live";
   }
 
   // -- Next Track Metadata Resolution Hierarchy --
   let nextArtist = cleanText(nextTrack.ARTIST || nextTrack.artist, 160);
   let nextTitle = cleanText(nextTrack.TITLE || nextTrack.title, 160);
-  const nextCastTitle = cleanText(nextTrack.CASTTITLE || nextTrack.casttitle, 240);
+  const nextCastTitle = cleanText(
+    nextTrack.CASTTITLE || nextTrack.casttitle,
+    240,
+  );
 
   if ((!nextArtist || !nextTitle) && nextCastTitle) {
     const split = splitCastTitle(nextCastTitle);
@@ -100,9 +116,9 @@ export function normalizePlayback(playback: RadioBossPlaybackInfo): NormalizedPl
   }
 
   // 3. Durasi & Posisi Pemutaran
-  const posMs = parseInt(playback.Playback?.pos || '0', 10);
-  const lenMs = parseInt(playback.Playback?.len || '0', 10);
-  
+  const posMs = parseInt(playback.Playback?.pos || "0", 10);
+  const lenMs = parseInt(playback.Playback?.len || "0", 10);
+
   let positionSeconds = Math.round(posMs / 1000);
   if (isNaN(positionSeconds) || positionSeconds < 0) positionSeconds = 0;
 
@@ -130,12 +146,12 @@ export function normalizePlayback(playback: RadioBossPlaybackInfo): NormalizedPl
       album: currentAlbum,
       durationSeconds,
       positionSeconds,
-      progressPercent
+      progressPercent,
     },
     next: {
       artist: nextArtist,
       title: nextTitle,
-      castTitle: nextCastTitle || undefined
-    }
+      castTitle: nextCastTitle || undefined,
+    },
   };
 }
