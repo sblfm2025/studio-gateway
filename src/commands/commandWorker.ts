@@ -55,6 +55,31 @@ function sanitizeRadioBossMessage(value: string): string {
     .trim();
 }
 
+function stripRequestPrefix(value: string): string {
+  return value
+    .replace(/^Request\s+Radio\s+SBL\s*\|\s*/i, "")
+    .replace(/\s*\|\s*ID\s+[a-z0-9_-]+$/i, "")
+    .trim();
+}
+
+function buildRadioBossRequestMessage(input: {
+  requesterName: string;
+  title: string;
+  artist: string;
+  requestMessage: string;
+}): string {
+  const songLabel = [input.artist, input.title].filter(Boolean).join(" - ");
+  const cleanedMessage = stripRequestPrefix(input.requestMessage);
+  const parts = [
+    "Request Radio SBL",
+    input.requesterName ? `Dari: ${input.requesterName}` : "",
+    songLabel ? `Lagu: ${songLabel}` : "",
+    cleanedMessage && cleanedMessage !== songLabel ? `Pesan: ${cleanedMessage}` : "",
+  ].filter(Boolean);
+
+  return parts.join(" | ");
+}
+
 function isConfiguredDummyRequestFile(filePath: string): boolean {
   const dummyPath = process.env.SONG_REQUEST_DUMMY_FILE_PATH;
   if (!dummyPath) return false;
@@ -366,15 +391,14 @@ async function executeAddTrackToQueue(command: RadiobossCommand): Promise<Record
     );
   }
 
-  const messageParts = [
-    "Request Radio SBL",
-    requesterName ? `dari ${requesterName}` : "",
-    requestMessage || [artist, title].filter(Boolean).join(" - "),
-    requestId ? `ID ${requestId}` : "",
-  ].filter(Boolean);
   const responseText = await sendRadioBossAction("songrequest", {
     filename: resolvedFile,
-    message: messageParts.join(" | "),
+    message: buildRadioBossRequestMessage({
+      requesterName,
+      title,
+      artist,
+      requestMessage,
+    }),
   });
 
   await setDocument("songRequests", requestId, {
