@@ -224,6 +224,7 @@ export interface ProgramRecording {
 export type SongRequestStatus =
   | "new"
   | "notified"
+  | "pending_review"
   | "matched"
   | "needs_review"
   | "sent_to_radioboss"

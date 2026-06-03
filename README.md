@@ -193,3 +193,26 @@ Catatan operasional RadioBOSS:
 * Action `songrequest` hanya memasukkan lagu ke daftar Song Requests RadioBOSS, bukan langsung memutar lagu.
 * Agar request diputar otomatis, buat event Scheduler di RadioBOSS, misalnya `playrequestedsong 30`, lalu ulangi sesuai jam layanan request.
 * API Remote Control RadioBOSS tetap disarankan `localhost only`; jangan buka port RadioBOSS ke internet publik.
+
+## WhatsApp Request Worker
+
+Gateway dapat membaca pesan masuk WhatsApp Business di PC Studio memakai Baileys dan memasukkan request lagu ke koleksi `songRequests`. Worker ini tidak memutar lagu dan tidak langsung mengirim ke RadioBOSS; operator tetap mereview, mencocokkan file lagu, lalu aplikasi Radio SBL membuat command aman ke gateway.
+
+Konfigurasi `.env`:
+```env
+WHATSAPP_REQUEST_WORKER_ENABLED=false
+WHATSAPP_WORKER_START_DELAY_SECONDS=60
+WHATSAPP_IGNORE_GROUPS=true
+WHATSAPP_AUTO_REPLY_ENABLED=true
+WHATSAPP_MAX_REQUEST_PER_PHONE_PER_HOUR=3
+WHATSAPP_SESSION_DIR=./wa-session
+WHATSAPP_REQUIRE_KEYWORD=true
+WHATSAPP_ALLOWED_KEYWORDS=req,request,lagu,putarkan,minta lagu,kirim lagu
+```
+
+Alur uji:
+1. Set `WHATSAPP_REQUEST_WORKER_ENABLED=true`.
+2. Jalankan `npm run build`, lalu `npm start`.
+3. Scan QR yang tampil di terminal memakai WhatsApp Business studio.
+4. Kirim pesan contoh: `Request Nadhif Basalamah - Penjaga Hati untuk Rena`.
+5. Cek dokumen baru di `songRequests` dan halaman Review Request aplikasi Radio SBL.

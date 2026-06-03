@@ -8,6 +8,7 @@ import { Logger } from "./logger";
 import { startCommandWorker } from "./commands/commandWorker";
 import { startAutoRecordingManager } from "./recording/recordingManager";
 import { startSongRequestWorker } from "./songRequests/songRequestWorker";
+import { startWhatsAppRequestWorker } from "./whatsapp/whatsappWorker";
 import {
   FirestoreRadiobossStatus,
   FirestoreNowPlaying,
@@ -25,6 +26,7 @@ export const appVersion = "1.0.0";
 const commandWorkerEnabled = process.env.COMMAND_WORKER_ENABLED !== "false";
 const autoRecordingEnabled = process.env.AUTO_RECORDING_ENABLED === "true";
 const songRequestWorkerEnabled = process.env.SONG_REQUEST_WORKER_ENABLED !== "false";
+const whatsappRequestWorkerEnabled = process.env.WHATSAPP_REQUEST_WORKER_ENABLED === "true";
 
 // 1. Validasi Batas Polling Aman (Minimal 5 detik, Maksimal 60 detik)
 function getPollIntervalMs(): number {
@@ -386,6 +388,7 @@ async function startAgent() {
   Logger.info(`   Command Queue: ${commandWorkerEnabled ? "aktif" : "nonaktif"}`);
   Logger.info(`   Auto Recording: ${autoRecordingEnabled ? "aktif" : "nonaktif"}`);
   Logger.info(`   Song Request Worker: ${songRequestWorkerEnabled ? "aktif" : "nonaktif"}`);
+  Logger.info(`   WhatsApp Request Worker: ${whatsappRequestWorkerEnabled ? "aktif" : "nonaktif"}`);
   Logger.info("==================================================");
 
   // Menulis log startup awal ke Firestore
@@ -434,6 +437,10 @@ async function startAgent() {
   if (songRequestWorkerEnabled) {
     startSongRequestWorker();
   }
+
+  void startWhatsAppRequestWorker().catch((error) => {
+    Logger.error(`[WhatsAppWorker] Error startup tidak fatal: ${String(error)}`);
+  });
 }
 
 // 2. Mengimplementasikan Graceful Shutdown (SIGINT & SIGTERM)
