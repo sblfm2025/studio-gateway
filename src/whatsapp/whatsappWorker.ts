@@ -1,4 +1,8 @@
 import * as path from "path";
+import * as fs from "fs";
+import * as os from "os";
+import { exec } from "child_process";
+import QRCode from "qrcode";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { Logger } from "../logger";
 import { parseWhatsAppSongRequest } from "./whatsappParser";
@@ -14,6 +18,38 @@ const qrcode = require("qrcode-terminal") as {
 
 let started = false;
 let reconnectTimer: NodeJS.Timeout | null = null;
+
+const QR_TEMP_PREFIX = "wa-qr-";
+function getQrTtlMs(): number {
+  const raw = Number(process.env.WHATSAPP_QR_TTL_SECONDS || 300);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 300000;
+  return Math.max(30, raw) * 1000;
+}
+
+// Hapus file HTML QR lama yang lebih tua dari TTL * 2 pada startup
+function cleanupOldQrFiles() {
+  try {
+    const dir = os.tmpdir();
+    const files = fs.readdirSync(dir);
+    const now = Date.now();
+    const ttl = getQrTtlMs();
+    for (const f of files) {
+      if (!f.startsWith(QR_TEMP_PREFIX) || !f.endsWith(".html")) continue;
+      try {
+        const p = path.join(dir, f);
+        const stat = fs.statSync(p);
+        if (now - stat.mtimeMs > ttl * 2) {
+          fs.unlinkSync(p);
+          Logger.info(`[WhatsAppWorker] Menghapus QR HTML lama: ${p}`);
+        }
+      } catch (err) {
+        // ignore per-file errors
+      }
+    }
+  } catch (err) {
+    Logger.warn(`[WhatsAppWorker] Gagal membersihkan file QR lama: ${String(err)}`);
+  }
+}
 
 function getStartDelayMs(): number {
   const raw = Number(process.env.WHATSAPP_WORKER_START_DELAY_SECONDS || 60);
@@ -126,6 +162,53 @@ async function connectWhatsApp(): Promise<void> {
     if (qr) {
       Logger.info("[WhatsAppWorker] Scan QR berikut dengan WhatsApp Business di PC Studio:");
       qrcode.generate(qr, { small: true });
+      // Tampilkan QR di browser agar tetap terlihat meskipun proses utama berjalan tersembunyi
+      void (async () => {
+        try {
+          const dataUrl = await QRCode.toDataURL(qr);
+          const html = `<!doctype html><html><head><meta charset="utf-8"><title>WhatsApp QR</title></head><body style="display:flex;align-items:center;justify-content:center;height:100vh;background:#111;color:#fff;font-family:Arial,Helvetica"><div style="text-align:center"><h2>Scan QR WhatsApp Business</h2><img src="${dataUrl}" alt="QR Code" style="width:320px;height:320px;object-fit:contain;background:#fff;padding:8px;border-radius:8px"/><p style="opacity:0.8">Tutup tab setelah selesai.</p></div></body></html>`;
+          const tmpPath = path.join(os.tmpdir(), `wa-qr-${Date.now()}.html`);
+          fs.writeFileSync(tmpPath, html, "utf8");
+          // Create a marker file so external watchers can detect QR event
+          try {
+            const markerPath = path.join(os.tmpdir(), `wa-qr-${Date.now()}.flag`);
+            fs.writeFileSync(markerPath, tmpPath, "utf8");
+            // schedule marker removal with same TTL
+            setTimeout(() => {
+              try {
+                if (fs.existsSync(markerPath)) fs.unlinkSync(markerPath);
+              } catch (e) {}
+            }, getQrTtlMs());
+          } catch (e) {
+            // ignore marker write errors
+          }
+
+          const opener = process.platform === "win32"
+            ? `start "" "${tmpPath.replace(/"/g, '\\"')}"`
+            : process.platform === "darwin"
+              ? `open "${tmpPath.replace(/"/g, '\\"')}"`
+              : `xdg-open "${tmpPath.replace(/"/g, '\\"')}"`;
+
+          exec(opener, (err) => {
+            if (err) Logger.warn(`[WhatsAppWorker] Gagal membuka QR di browser: ${String(err)}`);
+            else Logger.info(`[WhatsAppWorker] QR ditampilkan di browser: ${tmpPath}`);
+          });
+            // Schedule automatic deletion of temporary file
+            const ttl = getQrTtlMs();
+            setTimeout(() => {
+              try {
+                if (fs.existsSync(tmpPath)) {
+                  fs.unlinkSync(tmpPath);
+                  Logger.info(`[WhatsAppWorker] QR HTML otomatis dihapus: ${tmpPath}`);
+                }
+              } catch (err) {
+                Logger.warn(`[WhatsAppWorker] Gagal menghapus file QR sementara: ${String(err)}`);
+              }
+            }, ttl);
+        } catch (err) {
+          Logger.warn(`[WhatsAppWorker] Gagal menghasilkan QR image: ${String(err)}`);
+        }
+      })();
     }
 
     if (connection === "open") {
