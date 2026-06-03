@@ -2,7 +2,6 @@ import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
 import { exec } from "child_process";
-import QRCode from "qrcode";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { Logger } from "../logger";
 import { parseWhatsAppSongRequest } from "./whatsappParser";
@@ -14,6 +13,10 @@ type WhatsAppSocket = WASocket;
 
 const qrcode = require("qrcode-terminal") as {
   generate: (input: string, options?: { small?: boolean }) => void;
+};
+
+const QRCode = require("qrcode") as {
+  toDataURL: (input: string) => Promise<string>;
 };
 
 let started = false;
@@ -100,20 +103,31 @@ function isGroupJid(remoteJid: string): boolean {
   return remoteJid.endsWith("@g.us");
 }
 
+function shortenLogText(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
+}
+
 function shouldReconnect(statusCode: number | undefined, disconnectReason: any): boolean {
   return statusCode !== disconnectReason.loggedOut;
 }
 
 async function handleIncomingMessage(sock: WhatsAppSocket, message: any): Promise<void> {
+  let remoteJid = "";
   try {
-    const remoteJid = message.key?.remoteJid;
+    remoteJid = message.key?.remoteJid || "";
     if (!remoteJid || remoteJid === "status@broadcast") return;
     if (message.key?.fromMe) return;
     if (shouldIgnoreGroups() && isGroupJid(remoteJid)) return;
 
     const text = extractMessageText(message.message).trim();
     const parsed = parseWhatsAppSongRequest(text);
-    if (!parsed.isRequest) return;
+    if (!parsed.isRequest) {
+      Logger.info(
+        `[WhatsAppWorker] Pesan diabaikan (${parsed.ignoredReason || "not_request"}): "${shortenLogText(text)}"`,
+      );
+      return;
+    }
 
     const phone = extractPhone(remoteJid);
     const limit = checkWhatsAppRateLimit(phone);
@@ -143,6 +157,15 @@ async function handleIncomingMessage(sock: WhatsAppSocket, message: any): Promis
     }
   } catch (error) {
     Logger.error(`[WhatsAppWorker] Gagal memproses pesan masuk: ${String(error)}`);
+    if (remoteJid && shouldAutoReply()) {
+      try {
+        await sock.sendMessage(remoteJid, {
+          text: "Mohon maaf, request lagu Anda belum berhasil dicatat oleh sistem Radio SBL. Silakan coba lagi beberapa saat lagi.",
+        });
+      } catch (replyError) {
+        Logger.warn(`[WhatsAppWorker] Gagal mengirim balasan error WhatsApp: ${String(replyError)}`);
+      }
+    }
   }
 }
 
