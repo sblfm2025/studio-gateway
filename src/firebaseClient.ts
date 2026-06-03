@@ -52,11 +52,38 @@ class MockCollectionReference {
     );
     return { id: docId };
   }
+
+  where() {
+    return this;
+  }
+
+  limit() {
+    return this;
+  }
+
+  async get() {
+    Logger.info(
+      `[Mock Firestore] query get() -> Collection: "${this.name}"`,
+    );
+    return {
+      docs: [],
+    };
+  }
 }
 
 const mockDb = {
   collection(name: string) {
     return new MockCollectionReference(name);
+  },
+  async runTransaction(callback: any) {
+    return callback({
+      async get(ref: any) {
+        return ref.get();
+      },
+      set(ref: any, data: any, options?: any) {
+        return ref.set(data, options);
+      },
+    });
   },
 };
 

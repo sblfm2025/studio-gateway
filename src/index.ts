@@ -5,6 +5,9 @@ import { fetchPlaybackInfoFromRadioBoss } from "./radiobossClient";
 import { parsePlaybackInfo } from "./parsePlaybackInfo";
 import { normalizePlayback } from "./normalizeTrack";
 import { Logger } from "./logger";
+import { startCommandWorker } from "./commands/commandWorker";
+import { startAutoRecordingManager } from "./recording/recordingManager";
+import { startSongRequestWorker } from "./songRequests/songRequestWorker";
 import {
   FirestoreRadiobossStatus,
   FirestoreNowPlaying,
@@ -19,6 +22,9 @@ export const gatewayId = process.env.GATEWAY_ID || "studio-main";
 const gatewayName = process.env.GATEWAY_NAME || "Studio Utama Radio SBL";
 export const pcName = process.env.PC_NAME || os.hostname() || "STUDIO-SBL";
 export const appVersion = "1.0.0";
+const commandWorkerEnabled = process.env.COMMAND_WORKER_ENABLED !== "false";
+const autoRecordingEnabled = process.env.AUTO_RECORDING_ENABLED === "true";
+const songRequestWorkerEnabled = process.env.SONG_REQUEST_WORKER_ENABLED !== "false";
 
 // 1. Validasi Batas Polling Aman (Minimal 5 detik, Maksimal 60 detik)
 function getPollIntervalMs(): number {
@@ -339,7 +345,7 @@ async function updateGatewayHeartbeat(options: {
       gatewayName,
       pcName,
       status: options.status,
-      mode: "read_only",
+      mode: commandWorkerEnabled ? "read_write_command_queue" : "read_only",
       appVersion,
       lastSeenAt: options.lastSeenAt,
     };
@@ -377,6 +383,9 @@ async function startAgent() {
   Logger.info(`   PC Name:      ${pcName}`);
   Logger.info(`   Version:      ${appVersion}`);
   Logger.info(`   Interval:     ${pollIntervalMs / 1000} detik`);
+  Logger.info(`   Command Queue: ${commandWorkerEnabled ? "aktif" : "nonaktif"}`);
+  Logger.info(`   Auto Recording: ${autoRecordingEnabled ? "aktif" : "nonaktif"}`);
+  Logger.info(`   Song Request Worker: ${songRequestWorkerEnabled ? "aktif" : "nonaktif"}`);
   Logger.info("==================================================");
 
   // Menulis log startup awal ke Firestore
@@ -413,6 +422,18 @@ async function startAgent() {
     `[Agent] Menjadwalkan sinkronisasi berkala setiap ${pollIntervalMs / 1000} detik.`,
   );
   setInterval(safeSyncRadioBoss, pollIntervalMs);
+
+  if (commandWorkerEnabled) {
+    startCommandWorker();
+  }
+
+  if (autoRecordingEnabled) {
+    startAutoRecordingManager();
+  }
+
+  if (songRequestWorkerEnabled) {
+    startSongRequestWorker();
+  }
 }
 
 // 2. Mengimplementasikan Graceful Shutdown (SIGINT & SIGTERM)

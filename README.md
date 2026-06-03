@@ -129,3 +129,59 @@ Agen ini menyinkronkan data ke beberapa koleksi Firestore berikut:
 * **`radiobossAuditLogs/{logId}`**: Rekam jejak audit keamanan dan peristiwa teknis penting.
 
 *Rincian tipe data dan struktur skema selengkapnya dapat Anda lihat di dokumen: [FIRESTORE_SCHEMA.md](file:///e:/studio-gateway/studio-gateway/FIRESTORE_SCHEMA.md).*
+
+---
+
+## Command Queue Aman
+
+Gateway dapat memproses command manual dari aplikasi Radio SBL melalui koleksi `radiobossCommands`. Browser tetap tidak pernah memanggil API RadioBOSS langsung.
+
+Command awal yang didukung:
+* `START_RECORDING`
+* `STOP_RECORDING`
+* `MARK_RECORDING_SKIPPED`
+* `RETRY_COMMAND`
+* `ADD_TRACK_TO_QUEUE`, yang diterjemahkan gateway menjadi action `songrequest` RadioBOSS agar masuk ke daftar Song Requests di aplikasi RadioBOSS.
+
+Koleksi tambahan yang dipakai:
+* `radiobossCommands/{commandId}`
+* `programRecordingRules/{programId}`
+* `programRecordings/{recordingId}`
+
+Konfigurasi tambahan di `.env`:
+```env
+COMMAND_WORKER_ENABLED=true
+COMMAND_POLL_INTERVAL_SECONDS=5
+AUTO_RECORDING_ENABLED=false
+AUTO_RECORDING_INTERVAL_SECONDS=60
+RADIO_SBL_RECORDING_ROOT=D:\RadioSBL_REKAMAN
+RADIO_SBL_MUSIC_LIBRARY_ROOT=D:\RadioSBL_AUDIO
+```
+
+Root folder rekaman dan music library wajib berada di PC studio. Gateway melakukan validasi path agar command tidak bisa menulis atau membaca file di luar root yang diizinkan.
+
+`AUTO_RECORDING_ENABLED` sengaja default `false`. Aktifkan menjadi `true` hanya setelah `broadcastSchedules`, `attendanceRecords`, dan `programRecordingRules` sudah siap di Firestore serta folder rekaman sudah benar di PC studio.
+
+## Song Request Worker
+
+Gateway juga dapat membantu alur request lagu dari aplikasi Radio SBL tanpa membuka akses RadioBOSS ke browser.
+
+Alur aman yang dipakai:
+* Aplikasi menulis request ke `songRequests`.
+* Gateway membaca request berstatus `new` atau `notified`.
+* Gateway mencocokkan judul dan penyanyi dengan `musicLibraryIndex`.
+* Jika cocok kuat, request otomatis dibuatkan command `ADD_TRACK_TO_QUEUE`.
+* Command worker memvalidasi path lalu mengirim action `songrequest` ke RadioBOSS.
+* Jika ambigu atau tidak ditemukan, request ditandai `needs_review` untuk diperiksa operator.
+* Gateway tetap menulis audit log sehingga alur bisa diinspeksi manual tanpa menjadi proses approve wajib.
+
+Konfigurasi tambahan di `.env`:
+```env
+SONG_REQUEST_WORKER_ENABLED=true
+SONG_REQUEST_WORKER_INTERVAL_SECONDS=30
+SONG_REQUEST_AUTO_FORWARD_TO_RADIOBOSS=true
+SONG_REQUEST_AUTO_FORWARD_MIN_CONFIDENCE=80
+RADIO_SBL_MUSIC_LIBRARY_ROOT=D:\RadioSBL_AUDIO
+```
+
+Dengan `SONG_REQUEST_AUTO_FORWARD_TO_RADIOBOSS=true`, request yang cocok kuat dengan `musicLibraryIndex` otomatis dibuatkan command dan dikirim ke daftar **Song Requests** di RadioBOSS. Operator tetap dapat mereview atau mengeksekusi request dari RadioBOSS, sementara aplikasi Radio SBL hanya menjadi pengirim dan panel inspeksi.
