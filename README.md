@@ -127,6 +127,8 @@ Agen ini menyinkronkan data ke beberapa koleksi Firestore berikut:
 * **`radiobossGatewayHeartbeat/{gatewayId}`**: Detak keaktifan mesin PC studio fisik.
 * **`radiobossTrackHistory/{trackId}`**: Riwayat track list lagu siaran yang selesai diputar.
 * **`radiobossAuditLogs/{logId}`**: Rekam jejak audit keamanan dan peristiwa teknis penting.
+* **`weekly_schedule_slots/{slotId}`**: Jadwal mingguan berulang dari aplikasi Radio SBL yang dipakai auto recording.
+* **`scheduleOverrides/{overrideId}`**: Override tanggal tertentu untuk mengganti, membatalkan, atau menambah slot siaran.
 
 *Rincian tipe data dan struktur skema selengkapnya dapat Anda lihat di dokumen: [FIRESTORE_SCHEMA.md](file:///e:/studio-gateway/studio-gateway/FIRESTORE_SCHEMA.md).*
 
@@ -145,7 +147,7 @@ Command awal yang didukung:
 
 Koleksi tambahan yang dipakai:
 * `radiobossCommands/{commandId}`
-* `programRecordingRules/{programId}`
+* `programRecordingRules/{programId}` atau `programRecordingRules/{scheduleId}` untuk rule khusus slot jadwal.
 * `programRecordings/{recordingId}`
 
 Konfigurasi tambahan di `.env`:
@@ -160,7 +162,7 @@ RADIO_SBL_MUSIC_LIBRARY_ROOT=D:\RadioSBL_AUDIO
 
 Root folder rekaman dan music library wajib berada di PC studio. Gateway melakukan validasi path agar command tidak bisa menulis atau membaca file di luar root yang diizinkan.
 
-`AUTO_RECORDING_ENABLED` sengaja default `false`. Aktifkan menjadi `true` hanya setelah `broadcastSchedules`, `attendanceRecords`, dan `programRecordingRules` sudah siap di Firestore serta folder rekaman sudah benar di PC studio.
+`AUTO_RECORDING_ENABLED` sengaja default `false`. Aktifkan menjadi `true` hanya setelah `weekly_schedule_slots` atau `broadcastSchedules`, `attendanceRecords`, dan `programRecordingRules` sudah siap di Firestore serta folder rekaman sudah benar di PC studio. Jika `weekly_schedule_slots` tersedia, gateway akan membentuk jadwal harian berulang untuk kemarin, hari ini, dan besok, lalu menerapkan `scheduleOverrides` sebelum memutuskan start/stop rekaman.
 
 ## Song Request Worker
 
@@ -185,3 +187,9 @@ RADIO_SBL_MUSIC_LIBRARY_ROOT=D:\RadioSBL_AUDIO
 ```
 
 Dengan `SONG_REQUEST_AUTO_FORWARD_TO_RADIOBOSS=true`, request yang cocok kuat dengan `musicLibraryIndex` otomatis dibuatkan command dan dikirim ke daftar **Song Requests** di RadioBOSS. Operator tetap dapat mereview atau mengeksekusi request dari RadioBOSS, sementara aplikasi Radio SBL hanya menjadi pengirim dan panel inspeksi.
+
+Catatan operasional RadioBOSS:
+* Command `ADD_TRACK_TO_QUEUE` diterjemahkan menjadi action API `songrequest` dengan `filename` full path file lokal dan `message` aman.
+* Action `songrequest` hanya memasukkan lagu ke daftar Song Requests RadioBOSS, bukan langsung memutar lagu.
+* Agar request diputar otomatis, buat event Scheduler di RadioBOSS, misalnya `playrequestedsong 30`, lalu ulangi sesuai jam layanan request.
+* API Remote Control RadioBOSS tetap disarankan `localhost only`; jangan buka port RadioBOSS ke internet publik.

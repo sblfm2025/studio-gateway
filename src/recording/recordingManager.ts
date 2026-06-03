@@ -3,7 +3,7 @@ import { Logger } from "../logger";
 import type { ProgramRecording, ProgramRecordingRule, RadiobossCommand } from "../types";
 import { findValidAttendance } from "../attendance/attendanceReader";
 import { getSchedulesNearNow, type NormalizedSchedule } from "../schedule/scheduleReader";
-import { getDefaultRecordingRule, getRecordingRule } from "./recordingRules.service";
+import { getDefaultRecordingRule, getRecordingRule, getRecordingRuleForSchedule } from "./recordingRules.service";
 import { upsertProgramRecording } from "./recordingStatus.service";
 
 const gatewayId = process.env.GATEWAY_ID || "studio-main";
@@ -16,6 +16,14 @@ function getAutoRecordingIntervalMs(): number {
 
 function safeId(value: string): string {
   return value.replace(/[/.#[\]$]/g, "_");
+}
+
+function formatDateKey(date: Date): string {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 function slugify(value: string): string {
@@ -33,7 +41,7 @@ function toMillis(value: any): number {
 }
 
 async function getRuleForSchedule(schedule: NormalizedSchedule): Promise<ProgramRecordingRule> {
-  const primary = await getRecordingRule(schedule.programId);
+  const primary = await getRecordingRuleForSchedule(schedule.scheduleId, schedule.programId, schedule.programName);
   if (primary.recordingEnabled || schedule.programId === slugify(schedule.programName)) return primary;
 
   const secondaryId = slugify(schedule.programName);
@@ -60,12 +68,23 @@ async function hasPendingCommand(dedupeKey: string): Promise<boolean> {
   return snapshot.docs.length > 0;
 }
 
+async function hasCompletedCommand(dedupeKey: string): Promise<boolean> {
+  const snapshot = await db
+    .collection("radiobossCommands")
+    .where("dedupeKey", "==", dedupeKey)
+    .where("status", "in", ["success", "cancelled"])
+    .limit(1)
+    .get();
+
+  return snapshot.docs.length > 0;
+}
+
 async function createSystemCommand(
   type: "START_RECORDING" | "STOP_RECORDING",
   payload: Record<string, any>,
   dedupeKey: string,
 ): Promise<string | null> {
-  if (await hasPendingCommand(dedupeKey)) return null;
+  if (await hasPendingCommand(dedupeKey) || await hasCompletedCommand(dedupeKey)) return null;
 
   const command: Omit<RadiobossCommand, "id"> = {
     type,
@@ -122,7 +141,10 @@ function isStopDue(now: Date, recording: ProgramRecording, rule: ProgramRecordin
   const plannedStopMs = toMillis(recording.plannedStopAt);
   const plannedStartMs = toMillis(recording.plannedStartAt || recording.startedAt);
   const stopGraceDue = plannedStopMs > 0 && now.getTime() > plannedStopMs + rule.stopGraceMinutes * 60000;
-  const maxOverrunDue = plannedStartMs > 0 && now.getTime() > plannedStartMs + (rule.maxOverrunMinutes * 60000);
+  const plannedDurationMs = plannedStopMs > plannedStartMs ? plannedStopMs - plannedStartMs : 0;
+  const maxOverrunDue = plannedStartMs > 0 &&
+    plannedDurationMs > 0 &&
+    now.getTime() > plannedStartMs + plannedDurationMs + (rule.maxOverrunMinutes * 60000);
   return stopGraceDue || maxOverrunDue;
 }
 
@@ -139,7 +161,8 @@ async function getActiveRecordings(): Promise<ProgramRecording[]> {
 
 async function evaluateSchedule(now: Date, schedule: NormalizedSchedule, radioBossOnline: boolean) {
   const rule = await getRuleForSchedule(schedule);
-  const recordingId = `rec-${safeId(schedule.scheduleId)}`;
+  const occurrenceKey = `${schedule.scheduleId}_${formatDateKey(schedule.startsAt)}`;
+  const recordingId = `rec-${safeId(occurrenceKey)}`;
   const existing = await getRecordingById(recordingId);
 
   if (!rule.recordingEnabled) {
@@ -188,7 +211,7 @@ async function evaluateSchedule(now: Date, schedule: NormalizedSchedule, radioBo
       plannedStopAt: schedule.endsAt.toISOString(),
       reason: "auto_recording_manager",
     },
-    `START_RECORDING_${schedule.scheduleId}`,
+    `START_RECORDING_${occurrenceKey}`,
   );
 
   if (commandId) {
@@ -213,7 +236,7 @@ async function stopOverdueRecordings(now: Date) {
         recordingId: recording.id,
         reason: "auto_recording_manager_stop",
       },
-      `STOP_RECORDING_${recording.id}`,
+      `STOP_RECORDING_${recording.id}_${formatDateKey(now)}`,
     );
 
     if (commandId) {

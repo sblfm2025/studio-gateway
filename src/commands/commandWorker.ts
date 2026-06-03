@@ -6,7 +6,7 @@ import type { FirestoreAuditLog, ProgramRecording, RadiobossCommand } from "../t
 import { validateCommand } from "./commandValidator";
 import { tryLockCommand } from "./commandLock";
 import { SafeCommandError, toSafeCommandError } from "./commandTypes";
-import { getRecordingRule } from "../recording/recordingRules.service";
+import { getRecordingRuleForSchedule } from "../recording/recordingRules.service";
 import { buildRecordingFileName, buildRecordingFilePath } from "../recording/recordingFilename";
 import {
   getProgramRecording,
@@ -45,6 +45,10 @@ function quoteCommandArg(value: string): string {
   return `"${value.replace(/"/g, "")}"`;
 }
 
+function safeFirestoreId(value: string): string {
+  return value.replace(/[/.#[\]$]/g, "_");
+}
+
 function toMillis(value: any): number {
   if (!value) return 0;
   if (typeof value.toMillis === "function") return value.toMillis();
@@ -58,6 +62,19 @@ function toTimestamp(value: any, fallback: any) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return fallback;
   return Timestamp.fromDate ? Timestamp.fromDate(date) : date;
+}
+
+function formatDateKey(date: Date): string {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function getOccurrenceKey(scheduleId: string, plannedStartAt: any): string {
+  const date = plannedStartAt ? new Date(plannedStartAt) : new Date();
+  return safeFirestoreId(`${scheduleId}_${formatDateKey(Number.isNaN(date.getTime()) ? new Date() : date)}`);
 }
 
 async function writeAuditLog(
@@ -118,6 +135,36 @@ async function markSuccess(commandId: string, result: Record<string, any>) {
   });
 }
 
+async function markCancelled(commandId: string, result: Record<string, any>) {
+  await setDocument("radiobossCommands", commandId, {
+    status: "cancelled",
+    executedAt: Timestamp.now(),
+    result,
+    errorCode: null,
+    errorMessageSafe: null,
+    lockedBy: null,
+    lockedAt: null,
+    updatedAt: Timestamp.now(),
+  });
+}
+
+async function findSuccessfulCommandWithSameDedupeKey(command: RadiobossCommand): Promise<string | null> {
+  if (!command.dedupeKey) return null;
+
+  const snapshot = await db
+    .collection("radiobossCommands")
+    .where("dedupeKey", "==", command.dedupeKey)
+    .where("status", "==", "success")
+    .limit(5)
+    .get();
+
+  const duplicate = snapshot.docs
+    .map((item: any) => ({ id: item.id, ...(item.data() as Omit<RadiobossCommand, "id">) }))
+    .find((item: RadiobossCommand) => item.id !== command.id);
+
+  return duplicate?.id || null;
+}
+
 async function markFailedOrRetryable(command: RadiobossCommand, error: SafeCommandError) {
   const attempts = (command.attempts || 0) + 1;
   const maxAttempts = command.maxAttempts || 3;
@@ -149,7 +196,7 @@ async function executeStartRecording(command: RadiobossCommand): Promise<Record<
   const announcerId = getString(command.payload, "announcerId", "unknown");
   const programName = getString(command.payload, "programName");
   const announcerName = getString(command.payload, "announcerName", announcerId);
-  const rule = await getRecordingRule(programId);
+  const rule = await getRecordingRuleForSchedule(scheduleId, programId, programName);
 
   if (!rule.recordingEnabled && !rule.allowManualOverride) {
     throw new SafeCommandError(
@@ -160,7 +207,7 @@ async function executeStartRecording(command: RadiobossCommand): Promise<Record<
   }
 
   const now = new Date();
-  const recordingId = getString(command.payload, "recordingId") || `rec-${scheduleId}`;
+  const recordingId = getString(command.payload, "recordingId") || `rec-${getOccurrenceKey(scheduleId, command.payload.plannedStartAt)}`;
   const fileName = buildRecordingFileName({
     date: now,
     programName: programName || rule.programName || programId,
@@ -184,7 +231,7 @@ async function executeStartRecording(command: RadiobossCommand): Promise<Record<
     announcerName,
     status: "recording",
     plannedStartAt: toTimestamp(command.payload.plannedStartAt, Timestamp.now()),
-    plannedStopAt: toTimestamp(command.payload.plannedStopAt, null),
+    plannedStopAt: toTimestamp(command.payload.plannedStopAt || command.payload.plannedEndAt, null),
     startedAt: Timestamp.now(),
     stoppedAt: null,
     durationSeconds: null,
@@ -237,16 +284,17 @@ async function executeStopRecording(command: RadiobossCommand): Promise<Record<s
 }
 
 async function executeMarkSkipped(command: RadiobossCommand): Promise<Record<string, any>> {
-  const recordingId = getString(command.payload, "recordingId") || `rec-${getString(command.payload, "scheduleId")}`;
-  const programId = getString(command.payload, "programId");
   const scheduleId = getString(command.payload, "scheduleId");
+  const recordingId = getString(command.payload, "recordingId") || `rec-${getOccurrenceKey(scheduleId, command.payload.plannedStartAt)}`;
+  const programId = getString(command.payload, "programId");
   const reason = getString(command.payload, "reason", "manual_operator_skip");
 
   await upsertProgramRecording(recordingId, {
     programId,
-    programName: programId,
+    programName: getString(command.payload, "programName", programId),
     scheduleId,
     status: "manual_override",
+    plannedStartAt: toTimestamp(command.payload.plannedStartAt, null),
     gatewayId,
     errorMessageSafe: reason,
   });
@@ -383,6 +431,18 @@ export async function processPendingCommands(): Promise<void> {
 
     try {
       validateCommand(command);
+      const successfulDuplicateId = await findSuccessfulCommandWithSameDedupeKey(command);
+      if (successfulDuplicateId) {
+        const result = {
+          skippedReason: "duplicate_dedupe_key_success",
+          dedupeKey: command.dedupeKey,
+          duplicateCommandId: successfulDuplicateId,
+        };
+        await markCancelled(command.id, result);
+        await writeAuditLog("command_duplicate_cancelled", command, "skipped", result);
+        Logger.info(`[CommandWorker] Command duplikat dibatalkan: ${command.id}`);
+        continue;
+      }
       await markExecuting(command.id);
       const result = await executeAllowedCommand(command);
       await markSuccess(command.id, result);

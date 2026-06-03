@@ -23,5 +23,34 @@ export function getDefaultRecordingRule(programId: string): ProgramRecordingRule
 export async function getRecordingRule(programId: string): Promise<ProgramRecordingRule> {
   const snapshot = await db.collection("programRecordingRules").doc(programId).get();
   if (!snapshot.exists) return getDefaultRecordingRule(programId);
-  return { ...getDefaultRecordingRule(programId), ...(snapshot.data() as Partial<ProgramRecordingRule>) };
+  return {
+    ...getDefaultRecordingRule(programId),
+    id: snapshot.id,
+    ...(snapshot.data() as Partial<ProgramRecordingRule>),
+  };
+}
+
+export async function getRecordingRuleForSchedule(
+  scheduleId: string,
+  programId: string,
+  fallbackProgramName?: string,
+): Promise<ProgramRecordingRule> {
+  const scheduleSnapshot = await db.collection("programRecordingRules").doc(scheduleId).get();
+  if (scheduleSnapshot.exists) {
+    const data = scheduleSnapshot.data() as Partial<ProgramRecordingRule>;
+    return {
+      ...getDefaultRecordingRule(data.programId || programId),
+      id: scheduleSnapshot.id,
+      programName: fallbackProgramName || data.programName || programId,
+      ...data,
+      scheduleId: data.scheduleId || scheduleId,
+    };
+  }
+
+  const programRule = await getRecordingRule(programId);
+  if (programRule.programName === programRule.programId && fallbackProgramName) {
+    return { ...programRule, programName: fallbackProgramName };
+  }
+
+  return programRule;
 }

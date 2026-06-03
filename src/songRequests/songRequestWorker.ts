@@ -49,6 +49,7 @@ async function getPendingSongRequests(): Promise<SongRequest[]> {
 }
 
 async function createAddTrackCommand(request: SongRequest): Promise<string> {
+  const commandId = `song-request-${request.id}`;
   const command: Omit<RadiobossCommand, "id"> = {
     type: "ADD_TRACK_TO_QUEUE",
     status: "pending",
@@ -74,7 +75,22 @@ async function createAddTrackCommand(request: SongRequest): Promise<string> {
     updatedAt: Timestamp.now(),
   };
 
-  return addDocument("radiobossCommands", command);
+  const ref = db.collection("radiobossCommands").doc(commandId);
+
+  if (typeof db.runTransaction !== "function") {
+    const snapshot = await ref.get();
+    if (snapshot.exists) return commandId;
+    await ref.set(command, { merge: true });
+    return commandId;
+  }
+
+  return db.runTransaction(async (transaction: any) => {
+    const snapshot = await transaction.get(ref);
+    if (snapshot.exists) return commandId;
+
+    transaction.set(ref, command, { merge: true });
+    return commandId;
+  });
 }
 
 async function forwardMatchedRequest(request: SongRequest): Promise<void> {

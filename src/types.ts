@@ -177,6 +177,8 @@ export type RecordingStatus =
   | "radioboss_offline";
 
 export interface ProgramRecordingRule {
+  id?: string;
+  scheduleId?: string;
   programId: string;
   programName: string;
   recordingEnabled: boolean;
