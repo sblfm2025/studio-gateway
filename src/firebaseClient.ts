@@ -90,6 +90,81 @@ const mockDb = {
 let dbInstance: any;
 let timestampInstance: any;
 let fieldValueInstance: any;
+let quotaCooldownUntil = 0;
+let lastQuotaCooldownLogAt = 0;
+
+function getFirestoreOpTimeoutMs(): number {
+  const raw = Number(process.env.FIRESTORE_OP_TIMEOUT_MS || 15000);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 15000;
+  return Math.min(60000, Math.max(5000, raw));
+}
+
+function getQuotaCooldownMs(): number {
+  const raw = Number(process.env.FIRESTORE_QUOTA_COOLDOWN_SECONDS || 300);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 300000;
+  return Math.min(3600, Math.max(60, raw)) * 1000;
+}
+
+function isQuotaError(error: unknown): boolean {
+  const message = String(error);
+  return message.includes("RESOURCE_EXHAUSTED") || message.includes("Quota exceeded");
+}
+
+function activateQuotaCooldown(error: unknown) {
+  const message = String(error);
+  if (!isQuotaError(error) && !message.includes("melewati timeout lokal")) return;
+
+  quotaCooldownUntil = Date.now() + getQuotaCooldownMs();
+  Logger.warn(
+    `[Firestore] Quota exceeded. Operasi Firestore non-kritis dijeda sementara selama ${Math.round(getQuotaCooldownMs() / 1000)} detik.`,
+  );
+}
+
+function logCooldownSkip(operation: string) {
+  const now = Date.now();
+  if (now - lastQuotaCooldownLogAt < 60000) return;
+  lastQuotaCooldownLogAt = now;
+  const remainingSeconds = Math.max(0, Math.ceil((quotaCooldownUntil - now) / 1000));
+  Logger.warn(
+    `[Firestore] Melewati ${operation}; masih dalam masa cooldown quota sekitar ${remainingSeconds} detik.`,
+  );
+}
+
+export async function runFirestoreOperation<T = any>(operation: string, createPromise: () => Promise<T>): Promise<T> {
+  if (shouldSkipFirestoreOperation(operation)) {
+    throw new Error(`${operation} dilewati karena Firestore sedang cooldown quota`);
+  }
+
+  const timeoutMs = getFirestoreOpTimeoutMs();
+  let timeout: NodeJS.Timeout | null = null;
+  try {
+    const promise = createPromise();
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`${operation} melewati timeout lokal ${timeoutMs} ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } catch (error) {
+    activateQuotaCooldown(error);
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+export function isFirestoreQuotaCoolingDown(): boolean {
+  return Date.now() < quotaCooldownUntil;
+}
+
+export function shouldSkipFirestoreOperation(operation: string): boolean {
+  if (!isFirestoreQuotaCoolingDown()) return false;
+  logCooldownSkip(operation);
+  return true;
+}
 
 if (isMockFirebase) {
   Logger.info("==================================================");
@@ -157,8 +232,11 @@ export async function setDocument(
   data: object,
   merge = true,
 ) {
+  const operation = `set ${collection}/${docId}`;
+  if (shouldSkipFirestoreOperation(operation)) return;
+
   try {
-    await db.collection(collection).doc(docId).set(data, { merge });
+    await runFirestoreOperation(operation, () => db.collection(collection).doc(docId).set(data, { merge }));
   } catch (err: any) {
     Logger.error(
       `[Firestore] Gagal menulis dokumen "${collection}/${docId}": ${err.message || String(err)}`,
@@ -169,8 +247,13 @@ export async function setDocument(
 
 // Helper Write Terpadu: menambahkan dokumen acak secara konsisten
 export async function addDocument(collection: string, data: object) {
+  const operation = `add ${collection}`;
+  if (shouldSkipFirestoreOperation(operation)) {
+    return `skipped-quota-cooldown-${Date.now()}`;
+  }
+
   try {
-    const ref = await db.collection(collection).add(data);
+    const ref = await runFirestoreOperation<any>(operation, () => db.collection(collection).add(data));
     return ref.id;
   } catch (err: any) {
     Logger.error(

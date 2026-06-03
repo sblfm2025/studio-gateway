@@ -60,6 +60,12 @@ Dokumen ini memuat daftar kendala umum yang mungkin terjadi selama pengoperasian
    * Pastikan komputer studio memiliki koneksi internet yang stabil ke Google Cloud APIs. Lakukan ping ke `firestore.googleapis.com` lewat Command Prompt untuk memverifikasi jalur perutean jaringan Anda.
 4. **Periksa Aturan Aturan Keamanan (Security Rules)**:
    * Jika koneksi internet normal tapi penulisan ditolak, periksa Firestore Security Rules di Firebase Console Anda. Pastikan role akun layanan (*Service Account*) memiliki hak akses menulis (*write access*) penuh ke koleksi target.
+5. **Jika muncul `RESOURCE_EXHAUSTED: Quota exceeded`**:
+   * Artinya kuota Firestore proyek sedang habis atau terlalu banyak operasi dalam waktu singkat.
+   * Pastikan hanya satu proses `node.exe` gateway yang berjalan di PC Studio.
+   * Naikkan interval `.env`: `POLL_INTERVAL_SECONDS=30`, `COMMAND_POLL_INTERVAL_SECONDS=30`, `SONG_REQUEST_WORKER_INTERVAL_SECONDS=120`, dan `AUTO_RECORDING_INTERVAL_SECONDS=120`.
+   * Set `FIRESTORE_OP_TIMEOUT_MS=15000` dan `FIRESTORE_QUOTA_COOLDOWN_SECONDS=300` agar gateway tidak menggantung 10 menit saat Firestore menolak request.
+   * Jika kuota harian benar-benar habis, tunggu reset kuota atau aktifkan/naikkan billing/quota Firebase.
 
 ---
 

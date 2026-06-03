@@ -1,4 +1,11 @@
-import { db, Timestamp, setDocument, addDocument } from "../firebaseClient";
+import {
+  db,
+  Timestamp,
+  setDocument,
+  addDocument,
+  runFirestoreOperation,
+  shouldSkipFirestoreOperation,
+} from "../firebaseClient";
 import { Logger } from "../logger";
 import type { FirestoreAuditLog, RadiobossCommand, SongRequest } from "../types";
 import { findBestLibraryMatches } from "./musicLibraryMatcher";
@@ -33,9 +40,9 @@ function getAutoForwardThreshold(): number {
 }
 
 function getIntervalMs(): number {
-  const raw = Number(process.env.SONG_REQUEST_WORKER_INTERVAL_SECONDS || 30);
-  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 30000;
-  return Math.min(180, Math.max(15, raw)) * 1000;
+  const raw = Number(process.env.SONG_REQUEST_WORKER_INTERVAL_SECONDS || 120);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 120000;
+  return Math.min(300, Math.max(60, raw)) * 1000;
 }
 
 async function writeAuditLog(action: string, request: SongRequest, result: "success" | "failed" | "skipped", details: Record<string, any>) {
@@ -56,11 +63,14 @@ async function writeAuditLog(action: string, request: SongRequest, result: "succ
 }
 
 async function getPendingSongRequests(): Promise<SongRequest[]> {
-  const snapshot = await db
-    .collection("songRequests")
-    .where("status", "in", ["new", "notified", "pending_review", "matched"])
-    .limit(20)
-    .get();
+  const snapshot = await runFirestoreOperation(
+    "query songRequests pending",
+    () => db
+      .collection("songRequests")
+      .where("status", "in", ["new", "notified", "pending_review", "matched"])
+      .limit(20)
+      .get(),
+  );
 
   return snapshot.docs.map((item: any) => ({ id: item.id, ...(item.data() as Omit<SongRequest, "id">) }));
 }
@@ -96,19 +106,25 @@ async function createAddTrackCommand(request: SongRequest): Promise<string> {
   const ref = db.collection("radiobossCommands").doc(commandId);
 
   if (typeof db.runTransaction !== "function") {
-    const snapshot = await ref.get();
+    const snapshot = await runFirestoreOperation(
+      `get radiobossCommands/${commandId}`,
+      () => ref.get(),
+    );
     if (snapshot.exists) return commandId;
-    await ref.set(command, { merge: true });
+    await runFirestoreOperation(
+      `set radiobossCommands/${commandId}`,
+      () => ref.set(command, { merge: true }),
+    );
     return commandId;
   }
 
-  return db.runTransaction(async (transaction: any) => {
+  return runFirestoreOperation(`transaction create radiobossCommands/${commandId}`, () => db.runTransaction(async (transaction: any) => {
     const snapshot = await transaction.get(ref);
     if (snapshot.exists) return commandId;
 
     transaction.set(ref, command, { merge: true });
     return commandId;
-  });
+  }));
 }
 
 async function forwardMatchedRequest(request: SongRequest): Promise<void> {
@@ -219,6 +235,8 @@ async function processSongRequest(request: SongRequest): Promise<void> {
 }
 
 export async function processPendingSongRequests(): Promise<void> {
+  if (shouldSkipFirestoreOperation("query songRequests pending")) return;
+
   const requests = await getPendingSongRequests();
 
   for (const request of requests) {

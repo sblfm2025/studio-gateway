@@ -1,4 +1,4 @@
-import { db } from "../firebaseClient";
+import { db, runFirestoreOperation } from "../firebaseClient";
 import type { MusicLibraryIndexTrack, SongRequest } from "../types";
 
 function normalize(value = ""): string {
@@ -30,7 +30,10 @@ function scoreTrack(request: SongRequest, track: MusicLibraryIndexTrack): number
 export async function findBestLibraryMatches(
   request: SongRequest,
 ): Promise<Array<MusicLibraryIndexTrack & { confidence: number }>> {
-  const snapshot = await db.collection("musicLibraryIndex").limit(500).get();
+  const snapshot = await runFirestoreOperation(
+    "query musicLibraryIndex",
+    () => db.collection("musicLibraryIndex").limit(500).get(),
+  );
 
   return snapshot.docs
     .map((item: any) => ({ id: item.id, ...(item.data() as Omit<MusicLibraryIndexTrack, "id">) }))

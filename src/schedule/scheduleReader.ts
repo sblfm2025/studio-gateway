@@ -1,4 +1,4 @@
-import { db } from "../firebaseClient";
+import { db, runFirestoreOperation } from "../firebaseClient";
 
 export type NormalizedSchedule = {
   scheduleId: string;
@@ -195,21 +195,30 @@ function weeklySlotToSchedule(slot: WeeklyScheduleSlot, date: Date): NormalizedS
 }
 
 async function getBroadcastSchedules(): Promise<NormalizedSchedule[]> {
-  const snapshot = await db.collection("broadcastSchedules").get();
+  const snapshot = await runFirestoreOperation(
+    "query broadcastSchedules",
+    () => db.collection("broadcastSchedules").get(),
+  );
   return snapshot.docs
     .map((item: any) => normalizeBroadcastSchedule(item.id, item.data()))
     .filter((schedule: NormalizedSchedule | null): schedule is NormalizedSchedule => Boolean(schedule));
 }
 
 async function getWeeklyScheduleSlots(): Promise<WeeklyScheduleSlot[]> {
-  const snapshot = await db.collection("weekly_schedule_slots").get();
+  const snapshot = await runFirestoreOperation(
+    "query weekly_schedule_slots",
+    () => db.collection("weekly_schedule_slots").get(),
+  );
   return snapshot.docs
     .map((item: any) => normalizeWeeklySlot(item.id, item.data()))
     .filter((slot: WeeklyScheduleSlot | null): slot is WeeklyScheduleSlot => Boolean(slot));
 }
 
 async function getScheduleOverrides(): Promise<ScheduleOverride[]> {
-  const snapshot = await db.collection("scheduleOverrides").get();
+  const snapshot = await runFirestoreOperation(
+    "query scheduleOverrides",
+    () => db.collection("scheduleOverrides").get(),
+  );
   return snapshot.docs
     .map((item: any) => normalizeOverride(item.id, item.data()))
     .filter((override: ScheduleOverride | null): override is ScheduleOverride => Boolean(override));

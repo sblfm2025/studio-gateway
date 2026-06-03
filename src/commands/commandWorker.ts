@@ -1,6 +1,13 @@
 import * as fs from "fs";
 import * as path from "path";
-import { db, Timestamp, setDocument, addDocument } from "../firebaseClient";
+import {
+  db,
+  Timestamp,
+  setDocument,
+  addDocument,
+  runFirestoreOperation,
+  shouldSkipFirestoreOperation,
+} from "../firebaseClient";
 import { Logger } from "../logger";
 import type { FirestoreAuditLog, ProgramRecording, RadiobossCommand } from "../types";
 import { validateCommand } from "./commandValidator";
@@ -19,9 +26,9 @@ const COMMAND_BATCH_LIMIT = 10;
 const gatewayId = process.env.GATEWAY_ID || "studio-main";
 
 function getCommandPollIntervalMs(): number {
-  const raw = Number(process.env.COMMAND_POLL_INTERVAL_SECONDS || 5);
-  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 5000;
-  return Math.min(60, Math.max(3, raw)) * 1000;
+  const raw = Number(process.env.COMMAND_POLL_INTERVAL_SECONDS || 30);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 30000;
+  return Math.min(120, Math.max(10, raw)) * 1000;
 }
 
 function getRecordingRoot(): string {
@@ -112,11 +119,14 @@ async function writeAuditLog(
 }
 
 async function getPendingCommands(): Promise<RadiobossCommand[]> {
-  const snapshot = await db
-    .collection("radiobossCommands")
-    .where("status", "in", ["pending", "retryable"])
-    .limit(COMMAND_BATCH_LIMIT)
-    .get();
+  const snapshot = await runFirestoreOperation(
+    "query radiobossCommands pending",
+    () => db
+      .collection("radiobossCommands")
+      .where("status", "in", ["pending", "retryable"])
+      .limit(COMMAND_BATCH_LIMIT)
+      .get(),
+  );
 
   return snapshot.docs
     .map((item: any) => ({ id: item.id, ...(item.data() as Omit<RadiobossCommand, "id">) }))
@@ -164,12 +174,15 @@ async function markCancelled(commandId: string, result: Record<string, any>) {
 async function findSuccessfulCommandWithSameDedupeKey(command: RadiobossCommand): Promise<string | null> {
   if (!command.dedupeKey) return null;
 
-  const snapshot = await db
-    .collection("radiobossCommands")
-    .where("dedupeKey", "==", command.dedupeKey)
-    .where("status", "==", "success")
-    .limit(5)
-    .get();
+  const snapshot = await runFirestoreOperation(
+    "query radiobossCommands duplicate",
+    () => db
+      .collection("radiobossCommands")
+      .where("dedupeKey", "==", command.dedupeKey)
+      .where("status", "==", "success")
+      .limit(5)
+      .get(),
+  );
 
   const duplicate = snapshot.docs
     .map((item: any) => ({ id: item.id, ...(item.data() as Omit<RadiobossCommand, "id">) }))
@@ -377,7 +390,10 @@ async function executeAddTrackToQueue(command: RadiobossCommand): Promise<Record
 async function executeRetryCommand(command: RadiobossCommand): Promise<Record<string, any>> {
   const targetCommandId = getString(command.payload, "commandId");
   const ref = db.collection("radiobossCommands").doc(targetCommandId);
-  const snapshot = await ref.get();
+  const snapshot = await runFirestoreOperation(
+    `get radiobossCommands/${targetCommandId}`,
+    () => ref.get(),
+  );
 
   if (!snapshot.exists) {
     throw new SafeCommandError(
@@ -438,6 +454,8 @@ async function executeAllowedCommand(command: RadiobossCommand): Promise<Record<
 }
 
 export async function processPendingCommands(): Promise<void> {
+  if (shouldSkipFirestoreOperation("query radiobossCommands pending")) return;
+
   const commands = await getPendingCommands();
 
   for (const command of commands) {

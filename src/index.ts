@@ -1,6 +1,13 @@
 import * as os from "os";
 import dotenv from "dotenv";
-import { db, Timestamp, setDocument, addDocument } from "./firebaseClient";
+import {
+  db,
+  Timestamp,
+  setDocument,
+  addDocument,
+  runFirestoreOperation,
+  shouldSkipFirestoreOperation,
+} from "./firebaseClient";
 import { fetchPlaybackInfoFromRadioBoss } from "./radiobossClient";
 import { parsePlaybackInfo } from "./parsePlaybackInfo";
 import { normalizePlayback } from "./normalizeTrack";
@@ -84,8 +91,18 @@ async function writeAuditLog(
 
 // Mengambil program aktif saat ini jika ada, fallback ke Program tidak tersinkron
 async function getActiveProgram() {
+  if (shouldSkipFirestoreOperation("get activeProgram/current")) {
+    return {
+      id: null,
+      title: "Program tidak tersinkron",
+    };
+  }
+
   try {
-    const doc = await db.collection("activeProgram").doc("current").get();
+    const doc = await runFirestoreOperation(
+      "get activeProgram/current",
+      () => db.collection("activeProgram").doc("current").get(),
+    );
     if (doc.exists) {
       const data = doc.data();
       if (data && data.programTitle) {
@@ -107,8 +124,13 @@ async function getActiveProgram() {
 
 // Inisialisasi lastTrack dari data lagu yang sedang diputar di Firestore saat startup agen
 export async function initializeLastTrack() {
+  if (shouldSkipFirestoreOperation("get radiobossNowPlaying/current")) return;
+
   try {
-    const doc = await db.collection("radiobossNowPlaying").doc("current").get();
+    const doc = await runFirestoreOperation(
+      "get radiobossNowPlaying/current",
+      () => db.collection("radiobossNowPlaying").doc("current").get(),
+    );
     if (doc.exists) {
       const data = doc.data();
       if (data && (data.artist || data.title)) {

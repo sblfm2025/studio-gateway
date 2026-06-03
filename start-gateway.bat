@@ -7,14 +7,13 @@ echo   RadioBOSS Firestore Gateway Agent Startup Script
 echo ==================================================
 echo.
 
-if exist dist\index.js goto StartAgent
-echo [1/2] Mengompilasi kode TypeScript ke JavaScript untuk pertama kali...
+echo [1/2] Mengompilasi kode TypeScript ke JavaScript...
 call node node_modules\typescript\bin\tsc
 if errorlevel 1 goto CompileError
 goto StartAgent
 
 :StartAgent
-echo [1/2] Berkas kompilasi dist\index.js ditemukan. Melompati kompilasi TypeScript untuk startup instan...
+if not exist dist\index.js goto CompileError
 echo.
 echo [2/2] Memulai Agen Gateway secara terus menerus...
 echo.

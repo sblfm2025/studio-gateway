@@ -1,4 +1,4 @@
-import { db, Timestamp, addDocument } from "../firebaseClient";
+import { db, Timestamp, addDocument, runFirestoreOperation, shouldSkipFirestoreOperation } from "../firebaseClient";
 import { Logger } from "../logger";
 import type { ProgramRecording, ProgramRecordingRule, RadiobossCommand } from "../types";
 import { findValidAttendance } from "../attendance/attendanceReader";
@@ -9,9 +9,9 @@ import { upsertProgramRecording } from "./recordingStatus.service";
 const gatewayId = process.env.GATEWAY_ID || "studio-main";
 
 function getAutoRecordingIntervalMs(): number {
-  const raw = Number(process.env.AUTO_RECORDING_INTERVAL_SECONDS || 60);
-  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 60000;
-  return Math.min(300, Math.max(30, raw)) * 1000;
+  const raw = Number(process.env.AUTO_RECORDING_INTERVAL_SECONDS || 120);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 120000;
+  return Math.min(600, Math.max(60, raw)) * 1000;
 }
 
 function safeId(value: string): string {
@@ -53,28 +53,37 @@ async function getRuleForSchedule(schedule: NormalizedSchedule): Promise<Program
 }
 
 async function isRadioBossOnline(): Promise<boolean> {
-  const snapshot = await db.collection("radiobossStatus").doc("current").get();
+  const snapshot = await runFirestoreOperation(
+    "get radiobossStatus/current",
+    () => db.collection("radiobossStatus").doc("current").get(),
+  );
   const data = snapshot.exists ? snapshot.data() : null;
   return Boolean(data?.radioBossOnline ?? data?.online);
 }
 
 async function hasPendingCommand(dedupeKey: string): Promise<boolean> {
-  const snapshot = await db
-    .collection("radiobossCommands")
-    .where("dedupeKey", "==", dedupeKey)
-    .where("status", "in", ["pending", "locked", "executing", "retryable"])
-    .get();
+  const snapshot = await runFirestoreOperation(
+    "query radiobossCommands pending dedupe",
+    () => db
+      .collection("radiobossCommands")
+      .where("dedupeKey", "==", dedupeKey)
+      .where("status", "in", ["pending", "locked", "executing", "retryable"])
+      .get(),
+  );
 
   return snapshot.docs.length > 0;
 }
 
 async function hasCompletedCommand(dedupeKey: string): Promise<boolean> {
-  const snapshot = await db
-    .collection("radiobossCommands")
-    .where("dedupeKey", "==", dedupeKey)
-    .where("status", "in", ["success", "cancelled"])
-    .limit(1)
-    .get();
+  const snapshot = await runFirestoreOperation(
+    "query radiobossCommands completed dedupe",
+    () => db
+      .collection("radiobossCommands")
+      .where("dedupeKey", "==", dedupeKey)
+      .where("status", "in", ["success", "cancelled"])
+      .limit(1)
+      .get(),
+  );
 
   return snapshot.docs.length > 0;
 }
@@ -149,13 +158,19 @@ function isStopDue(now: Date, recording: ProgramRecording, rule: ProgramRecordin
 }
 
 async function getRecordingById(recordingId: string): Promise<ProgramRecording | null> {
-  const snapshot = await db.collection("programRecordings").doc(recordingId).get();
+  const snapshot = await runFirestoreOperation(
+    `get programRecordings/${recordingId}`,
+    () => db.collection("programRecordings").doc(recordingId).get(),
+  );
   if (!snapshot.exists) return null;
   return { id: snapshot.id, ...(snapshot.data() as Omit<ProgramRecording, "id">) };
 }
 
 async function getActiveRecordings(): Promise<ProgramRecording[]> {
-  const snapshot = await db.collection("programRecordings").where("status", "==", "recording").get();
+  const snapshot = await runFirestoreOperation(
+    "query programRecordings active",
+    () => db.collection("programRecordings").where("status", "==", "recording").get(),
+  );
   return snapshot.docs.map((item: any) => ({ id: item.id, ...(item.data() as Omit<ProgramRecording, "id">) }));
 }
 
@@ -246,6 +261,8 @@ async function stopOverdueRecordings(now: Date) {
 }
 
 export async function evaluateAutoRecording(): Promise<void> {
+  if (shouldSkipFirestoreOperation("evaluate auto recording")) return;
+
   const now = new Date();
   const radioBossOnline = await isRadioBossOnline();
   const schedules = await getSchedulesNearNow(now);

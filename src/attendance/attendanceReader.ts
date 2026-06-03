@@ -1,4 +1,4 @@
-import { db } from "../firebaseClient";
+import { db, runFirestoreOperation } from "../firebaseClient";
 import type { NormalizedSchedule } from "../schedule/scheduleReader";
 
 export type NormalizedAttendance = {
@@ -68,7 +68,10 @@ function matchesSchedule(attendance: NormalizedAttendance, schedule: NormalizedS
 
 export async function findValidAttendance(schedule: NormalizedSchedule): Promise<NormalizedAttendance | null> {
   const scheduleDate = formatDateKey(schedule.startsAt);
-  const snapshot = await db.collection("attendanceRecords").get();
+  const snapshot = await runFirestoreOperation(
+    "query attendanceRecords",
+    () => db.collection("attendanceRecords").get(),
+  );
 
   const records = snapshot.docs
     .map((item: any) => normalizeAttendance(item.id, item.data()))
