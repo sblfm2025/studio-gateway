@@ -48,6 +48,12 @@ function sanitizeRadioBossMessage(value: string): string {
     .trim();
 }
 
+function isConfiguredDummyRequestFile(filePath: string): boolean {
+  const dummyPath = process.env.SONG_REQUEST_DUMMY_FILE_PATH;
+  if (!dummyPath) return false;
+  return path.resolve(filePath).toLowerCase() === path.resolve(dummyPath).toLowerCase();
+}
+
 function quoteCommandArg(value: string): string {
   return `"${value.replace(/"/g, "")}"`;
 }
@@ -329,8 +335,9 @@ async function executeAddTrackToQueue(command: RadiobossCommand): Promise<Record
   const resolvedRoot = path.resolve(libraryRoot);
   const resolvedFile = path.resolve(filePath);
   const relative = path.relative(resolvedRoot, resolvedFile);
+  const isDummyRequestFile = isConfiguredDummyRequestFile(resolvedFile);
 
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  if (!isDummyRequestFile && (relative.startsWith("..") || path.isAbsolute(relative))) {
     throw new SafeCommandError(
       "MUSIC_PATH_OUTSIDE_ROOT",
       "File lagu berada di luar folder library yang diizinkan.",
