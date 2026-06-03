@@ -9,6 +9,7 @@
     "dev": "ts-node src/index.ts",
     "mock-api": "ts-node src/mockRadioboss.ts",
     "test-parser": "ts-node src/testParser.ts",
+    "inspect:request": "ts-node src/tools/inspectSongRequests.ts",
     "inspect:requests": "ts-node src/tools/inspectSongRequests.ts",
     "format": "prettier --write \"src/**/*.ts\" \"sbl-app-templates/**/*.{ts,tsx}\""
   },
