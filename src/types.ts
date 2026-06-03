@@ -238,6 +238,9 @@ export interface SongRequest {
   title: string;
   artist?: string;
   requesterName?: string;
+  rawMessage?: string;
+  dedication?: string;
+  message?: string;
   status: SongRequestStatus;
   matchStatus?: "unmatched" | "matched" | "ambiguous" | "not_found";
   matchedTrackId?: string | null;

@@ -41,6 +41,13 @@ function getString(payload: Record<string, any>, field: string, fallback = ""): 
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function sanitizeRadioBossMessage(value: string): string {
+  return value
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function quoteCommandArg(value: string): string {
   return `"${value.replace(/"/g, "")}"`;
 }
@@ -308,6 +315,7 @@ async function executeAddTrackToQueue(command: RadiobossCommand): Promise<Record
   const title = getString(command.payload, "title");
   const artist = getString(command.payload, "artist");
   const requesterName = getString(command.payload, "requesterName", "Pendengar Radio SBL");
+  const requestMessage = sanitizeRadioBossMessage(getString(command.payload, "message"));
   const libraryRoot = process.env.RADIO_SBL_MUSIC_LIBRARY_ROOT;
 
   if (!libraryRoot) {
@@ -341,7 +349,7 @@ async function executeAddTrackToQueue(command: RadiobossCommand): Promise<Record
   const messageParts = [
     "Request Radio SBL",
     requesterName ? `dari ${requesterName}` : "",
-    [artist, title].filter(Boolean).join(" - "),
+    requestMessage || [artist, title].filter(Boolean).join(" - "),
     requestId ? `ID ${requestId}` : "",
   ].filter(Boolean);
   const responseText = await sendRadioBossAction("songrequest", {

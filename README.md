@@ -183,10 +183,13 @@ SONG_REQUEST_WORKER_ENABLED=true
 SONG_REQUEST_WORKER_INTERVAL_SECONDS=30
 SONG_REQUEST_AUTO_FORWARD_TO_RADIOBOSS=true
 SONG_REQUEST_AUTO_FORWARD_MIN_CONFIDENCE=80
+SONG_REQUEST_DUMMY_FILE_PATH=D:\RadioSBL_AUDIO\_SBL_REQUEST_NOTE.mp3
 RADIO_SBL_MUSIC_LIBRARY_ROOT=D:\RadioSBL_AUDIO
 ```
 
-Dengan `SONG_REQUEST_AUTO_FORWARD_TO_RADIOBOSS=true`, request yang cocok kuat dengan `musicLibraryIndex` otomatis dibuatkan command dan dikirim ke daftar **Song Requests** di RadioBOSS. Operator tetap dapat mereview atau mengeksekusi request dari RadioBOSS, sementara aplikasi Radio SBL hanya menjadi pengirim dan panel inspeksi.
+Dengan `SONG_REQUEST_DUMMY_FILE_PATH` terisi, gateway tidak perlu mencocokkan request ke `musicLibraryIndex`. Semua request yang masuk akan memakai file dummy/silent tersebut dan teks request lengkap dikirim ke kolom message Song Requests RadioBOSS. Pastikan file dummy berada di dalam `RADIO_SBL_MUSIC_LIBRARY_ROOT`.
+
+Jika `SONG_REQUEST_DUMMY_FILE_PATH` dikosongkan, gateway kembali memakai mode lama: request dicocokkan ke `musicLibraryIndex`, lalu yang cocok kuat otomatis dibuatkan command dan dikirim ke daftar **Song Requests** di RadioBOSS.
 
 Catatan operasional RadioBOSS:
 * Command `ADD_TRACK_TO_QUEUE` diterjemahkan menjadi action API `songrequest` dengan `filename` full path file lokal dan `message` aman.

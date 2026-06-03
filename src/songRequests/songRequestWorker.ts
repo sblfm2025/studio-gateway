@@ -9,6 +9,23 @@ function shouldAutoForward(): boolean {
   return process.env.SONG_REQUEST_AUTO_FORWARD_TO_RADIOBOSS !== "false";
 }
 
+function getDummyRequestFilePath(): string {
+  return (process.env.SONG_REQUEST_DUMMY_FILE_PATH || "").trim();
+}
+
+function buildRequestMessage(request: SongRequest): string {
+  const rawMessage = typeof (request as any).rawMessage === "string" ? (request as any).rawMessage.trim() : "";
+  const dedication = typeof (request as any).dedication === "string" ? (request as any).dedication.trim() : "";
+  const message = typeof (request as any).message === "string" ? (request as any).message.trim() : "";
+  const songText = [request.artist, request.title].filter(Boolean).join(" - ");
+
+  return [
+    rawMessage || songText || "Request lagu Radio SBL",
+    dedication ? `Dedikasi: ${dedication}` : "",
+    message && message !== rawMessage && message !== dedication ? message : "",
+  ].filter(Boolean).join(" | ");
+}
+
 function getAutoForwardThreshold(): number {
   const raw = Number(process.env.SONG_REQUEST_AUTO_FORWARD_MIN_CONFIDENCE || 80);
   if (!Number.isFinite(raw) || Number.isNaN(raw)) return 80;
@@ -41,7 +58,7 @@ async function writeAuditLog(action: string, request: SongRequest, result: "succ
 async function getPendingSongRequests(): Promise<SongRequest[]> {
   const snapshot = await db
     .collection("songRequests")
-    .where("status", "in", ["new", "notified", "matched"])
+    .where("status", "in", ["new", "notified", "pending_review", "matched"])
     .limit(20)
     .get();
 
@@ -60,6 +77,7 @@ async function createAddTrackCommand(request: SongRequest): Promise<string> {
       title: request.title,
       artist: request.artist || "",
       requesterName: request.requesterName || "Pendengar Radio SBL",
+      message: buildRequestMessage(request),
     },
     requestedBy: "studio_gateway",
     requestedByName: "Studio Gateway",
@@ -117,6 +135,37 @@ async function forwardMatchedRequest(request: SongRequest): Promise<void> {
 async function processSongRequest(request: SongRequest): Promise<void> {
   if (request.status === "matched") {
     if (shouldAutoForward()) await forwardMatchedRequest(request);
+    return;
+  }
+
+  const dummyFilePath = getDummyRequestFilePath();
+  if (dummyFilePath) {
+    const dummyRequest: SongRequest = {
+      ...request,
+      status: "matched",
+      matchStatus: "matched",
+      matchedTrackId: "radio-sbl-request-note",
+      matchedFilePath: dummyFilePath,
+      confidence: 100,
+    };
+
+    await setDocument("songRequests", request.id, {
+      status: shouldAutoForward() ? "matched" : "needs_review",
+      matchStatus: "matched",
+      matchedTrackId: dummyRequest.matchedTrackId,
+      matchedFilePath: dummyFilePath,
+      confidence: 100,
+      updatedAt: Timestamp.now(),
+    });
+
+    await writeAuditLog("song_request_dummy_selected", request, "success", {
+      matchedTrackId: dummyRequest.matchedTrackId,
+      dummyFilePath,
+    });
+
+    if (shouldAutoForward()) {
+      await forwardMatchedRequest(dummyRequest);
+    }
     return;
   }
 
