@@ -35,6 +35,17 @@ const autoRecordingEnabled = process.env.AUTO_RECORDING_ENABLED === "true";
 const songRequestWorkerEnabled = process.env.SONG_REQUEST_WORKER_ENABLED !== "false";
 const whatsappRequestWorkerEnabled = process.env.WHATSAPP_REQUEST_WORKER_ENABLED === "true";
 
+function getBoundedEnvSeconds(
+  name: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const raw = Number(process.env[name] || fallback);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return fallback;
+  return Math.min(max, Math.max(min, raw));
+}
+
 // 1. Validasi Batas Polling Aman (Minimal 5 detik, Maksimal 60 detik)
 function getPollIntervalMs(): number {
   const raw = parseInt(process.env.POLL_INTERVAL_SECONDS || "10", 10);
@@ -54,6 +65,14 @@ function getPollIntervalMs(): number {
 }
 
 const pollIntervalMs = getPollIntervalMs();
+const nowPlayingMinWriteMs =
+  getBoundedEnvSeconds("NOW_PLAYING_MIN_WRITE_SECONDS", 10, 5, 60) * 1000;
+const statusMinWriteMs =
+  getBoundedEnvSeconds("STATUS_MIN_WRITE_SECONDS", 60, 10, 300) * 1000;
+const heartbeatIntervalMs =
+  getBoundedEnvSeconds("HEARTBEAT_INTERVAL_SECONDS", 60, 30, 300) * 1000;
+const errorAuditMinWriteMs =
+  getBoundedEnvSeconds("ERROR_AUDIT_MIN_SECONDS", 300, 60, 3600) * 1000;
 
 // Interface pelacakan lagu dalam memori
 interface TrackingTrack {
@@ -64,6 +83,45 @@ interface TrackingTrack {
 
 let lastTrack: TrackingTrack | null = null;
 let isSyncing = false; // Lock Polling untuk mencegah Overlapping
+let lastNowPlayingSignature = "";
+let lastNowPlayingWriteAt = 0;
+let lastStatusSignature = "";
+let lastStatusWriteAt = 0;
+let lastHeartbeatWriteAt = 0;
+const lastAuditWriteAtByKey = new Map<string, number>();
+
+function shouldWritePeriodic(
+  signature: string,
+  lastSignature: string,
+  lastWriteAt: number,
+  minIntervalMs: number,
+): boolean {
+  return signature !== lastSignature || Date.now() - lastWriteAt >= minIntervalMs;
+}
+
+function getStatusSignature(data: FirestoreRadiobossStatus): string {
+  return [
+    data.online,
+    data.gatewayOnline,
+    data.playerState,
+    data.errorCode || "",
+    data.errorMessageSafe || "",
+  ].join("|");
+}
+
+function getNowPlayingSignature(data: FirestoreNowPlaying): string {
+  return [
+    data.artist,
+    data.title,
+    data.castTitle || "",
+    data.album || "",
+    data.durationSeconds || 0,
+    Math.floor((data.positionSeconds || 0) / Math.max(1, nowPlayingMinWriteMs / 1000)),
+    data.nextArtist || "",
+    data.nextTitle || "",
+    data.nextCastTitle || "",
+  ].join("|");
+}
 
 // Fungsi helper menulis log audit secara aman ke Firestore
 async function writeAuditLog(
@@ -71,8 +129,18 @@ async function writeAuditLog(
   details: string,
   level: "info" | "error" = "info",
   result: "success" | "failed" | "skipped" = "success",
+  options: { throttleKey?: string; minIntervalMs?: number } = {},
 ) {
   try {
+    if (options.throttleKey) {
+      const now = Date.now();
+      const lastWriteAt = lastAuditWriteAtByKey.get(options.throttleKey) || 0;
+      if (now - lastWriteAt < (options.minIntervalMs || errorAuditMinWriteMs)) {
+        return;
+      }
+      lastAuditWriteAtByKey.set(options.throttleKey, now);
+    }
+
     const auditData: FirestoreAuditLog = {
       action,
       mode: "system",
@@ -207,7 +275,21 @@ export async function syncRadioBoss() {
       source: "studio_gateway_agent",
       gatewayId,
     };
-    await setDocument("radiobossStatus", "current", statusData);
+    const statusSignature = getStatusSignature(statusData);
+    if (
+      shouldWritePeriodic(
+        statusSignature,
+        lastStatusSignature,
+        lastStatusWriteAt,
+        statusMinWriteMs,
+      )
+    ) {
+      const written = await setDocument("radiobossStatus", "current", statusData);
+      if (written) {
+        lastStatusSignature = statusSignature;
+        lastStatusWriteAt = Date.now();
+      }
+    }
 
     // 2. Perbarui radiobossNowPlaying/current
     const nowPlayingData: FirestoreNowPlaying = {
@@ -225,7 +307,21 @@ export async function syncRadioBoss() {
       source: "radioboss_remote_api",
       gatewayId,
     };
-    await setDocument("radiobossNowPlaying", "current", nowPlayingData);
+    const nowPlayingSignature = getNowPlayingSignature(nowPlayingData);
+    if (
+      shouldWritePeriodic(
+        nowPlayingSignature,
+        lastNowPlayingSignature,
+        lastNowPlayingWriteAt,
+        nowPlayingMinWriteMs,
+      )
+    ) {
+      const written = await setDocument("radiobossNowPlaying", "current", nowPlayingData);
+      if (written) {
+        lastNowPlayingSignature = nowPlayingSignature;
+        lastNowPlayingWriteAt = Date.now();
+      }
+    }
 
     // 3. Catat riwayat lagu jika ada lagu baru yang diputar (dengan penyaringan duplikat ketat)
     const currentArtist = normalized.current.artist;
@@ -336,7 +432,21 @@ export async function syncRadioBoss() {
         source: "studio_gateway_agent",
         gatewayId,
       };
-      await setDocument("radiobossStatus", "current", offlineStatus);
+      const statusSignature = getStatusSignature(offlineStatus);
+      if (
+        shouldWritePeriodic(
+          statusSignature,
+          lastStatusSignature,
+          lastStatusWriteAt,
+          statusMinWriteMs,
+        )
+      ) {
+        const written = await setDocument("radiobossStatus", "current", offlineStatus);
+        if (written) {
+          lastStatusSignature = statusSignature;
+          lastStatusWriteAt = Date.now();
+        }
+      }
 
       // Detak jantung gateway tetap berjalan mandiri
       await updateGatewayHeartbeat({
@@ -349,6 +459,10 @@ export async function syncRadioBoss() {
         `Sinkronisasi gagal: ${safeErr.errorMessageSafe}`,
         "error",
         "failed",
+        {
+          throttleKey: `sync_error:${safeErr.errorCode}`,
+          minIntervalMs: errorAuditMinWriteMs,
+        },
       );
     } catch (dbErr) {
       Logger.error(
@@ -364,6 +478,10 @@ async function updateGatewayHeartbeat(options: {
   lastSeenAt: any;
 }) {
   const start = Date.now();
+  const now = Date.now();
+  const isOffline = options.status === "offline";
+  if (!isOffline && now - lastHeartbeatWriteAt < heartbeatIntervalMs) return;
+
   try {
     const heartbeatData: FirestoreGatewayHeartbeat = {
       gatewayId,
@@ -375,9 +493,14 @@ async function updateGatewayHeartbeat(options: {
       lastSeenAt: options.lastSeenAt,
     };
     Logger.info(`[Heartbeat] Mengirim update heartbeat (status=${options.status}) ke Firestore...`);
-    await setDocument("radiobossGatewayHeartbeat", gatewayId, heartbeatData);
+    const written = await setDocument("radiobossGatewayHeartbeat", gatewayId, heartbeatData);
     const elapsed = Date.now() - start;
-    Logger.info(`[Heartbeat] Heartbeat berhasil diperbarui dalam ${elapsed} ms.`);
+    if (written) {
+      lastHeartbeatWriteAt = Date.now();
+      Logger.info(`[Heartbeat] Heartbeat berhasil diperbarui dalam ${elapsed} ms.`);
+    } else {
+      Logger.warn(`[Heartbeat] Heartbeat dilewati karena Firestore cooldown quota.`);
+    }
   } catch (err) {
     const elapsed = Date.now() - start;
     Logger.error(

@@ -1,10 +1,10 @@
-import { db, Timestamp, addDocument, runFirestoreOperation, shouldSkipFirestoreOperation } from "../firebaseClient";
+import { db, Timestamp, runFirestoreOperation, shouldSkipFirestoreOperation } from "../firebaseClient";
 import { Logger } from "../logger";
 import type { ProgramRecording, ProgramRecordingRule, RadiobossCommand } from "../types";
 import { findValidAttendance } from "../attendance/attendanceReader";
 import { getSchedulesNearNow, type NormalizedSchedule } from "../schedule/scheduleReader";
 import { getDefaultRecordingRule, getRecordingRule, getRecordingRuleForSchedule } from "./recordingRules.service";
-import { upsertProgramRecording } from "./recordingStatus.service";
+import { upsertProgramRecordingIfChanged } from "./recordingStatus.service";
 
 const gatewayId = process.env.GATEWAY_ID || "studio-main";
 
@@ -61,40 +61,12 @@ async function isRadioBossOnline(): Promise<boolean> {
   return Boolean(data?.radioBossOnline ?? data?.online);
 }
 
-async function hasPendingCommand(dedupeKey: string): Promise<boolean> {
-  const snapshot = await runFirestoreOperation(
-    "query radiobossCommands pending dedupe",
-    () => db
-      .collection("radiobossCommands")
-      .where("dedupeKey", "==", dedupeKey)
-      .where("status", "in", ["pending", "locked", "executing", "retryable"])
-      .get(),
-  );
-
-  return snapshot.docs.length > 0;
-}
-
-async function hasCompletedCommand(dedupeKey: string): Promise<boolean> {
-  const snapshot = await runFirestoreOperation(
-    "query radiobossCommands completed dedupe",
-    () => db
-      .collection("radiobossCommands")
-      .where("dedupeKey", "==", dedupeKey)
-      .where("status", "in", ["success", "cancelled"])
-      .limit(1)
-      .get(),
-  );
-
-  return snapshot.docs.length > 0;
-}
-
 async function createSystemCommand(
   type: "START_RECORDING" | "STOP_RECORDING",
   payload: Record<string, any>,
   dedupeKey: string,
 ): Promise<string | null> {
-  if (await hasPendingCommand(dedupeKey) || await hasCompletedCommand(dedupeKey)) return null;
-
+  const commandId = safeId(`auto_${dedupeKey}`);
   const command: Omit<RadiobossCommand, "id"> = {
     type,
     status: "pending",
@@ -117,16 +89,38 @@ async function createSystemCommand(
     updatedAt: Timestamp.now(),
   };
 
-  return addDocument("radiobossCommands", command);
+  const ref = db.collection("radiobossCommands").doc(commandId);
+
+  if (typeof db.runTransaction !== "function") {
+    const snapshot = await runFirestoreOperation(
+      `get radiobossCommands/${commandId}`,
+      () => ref.get(),
+    );
+    if (snapshot.exists) return null;
+    await runFirestoreOperation(
+      `set radiobossCommands/${commandId}`,
+      () => ref.set(command, { merge: true }),
+    );
+    return commandId;
+  }
+
+  return runFirestoreOperation(`transaction create radiobossCommands/${commandId}`, () => db.runTransaction(async (transaction: any) => {
+    const snapshot = await transaction.get(ref);
+    if (snapshot.exists) return null;
+
+    transaction.set(ref, command, { merge: true });
+    return commandId;
+  }));
 }
 
 async function markScheduleRecording(
   recordingId: string,
   schedule: NormalizedSchedule,
   status: ProgramRecording["status"],
+  existing: ProgramRecording | null,
   patch: Partial<ProgramRecording> = {},
 ) {
-  await upsertProgramRecording(recordingId, {
+  await upsertProgramRecordingIfChanged(recordingId, existing, {
     programId: schedule.programId,
     programName: schedule.programName,
     scheduleId: schedule.scheduleId,
@@ -181,14 +175,14 @@ async function evaluateSchedule(now: Date, schedule: NormalizedSchedule, radioBo
   const existing = await getRecordingById(recordingId);
 
   if (!rule.recordingEnabled) {
-    await markScheduleRecording(recordingId, schedule, "skipped_disabled", {
+    await markScheduleRecording(recordingId, schedule, "skipped_disabled", existing, {
       errorMessageSafe: "Recording rule program belum aktif.",
     });
     return;
   }
 
   if (!rule.autoStart) {
-    await markScheduleRecording(recordingId, schedule, "ready");
+    await markScheduleRecording(recordingId, schedule, "ready", existing);
     return;
   }
 
@@ -197,7 +191,7 @@ async function evaluateSchedule(now: Date, schedule: NormalizedSchedule, radioBo
   if (rule.requireAttendance) {
     const attendance = await findValidAttendance(schedule);
     if (!attendance) {
-      await markScheduleRecording(recordingId, schedule, "waiting_attendance", {
+      await markScheduleRecording(recordingId, schedule, "waiting_attendance", existing, {
         errorMessageSafe: "Rekaman menunggu absensi penyiar yang valid.",
       });
       return;
@@ -205,7 +199,7 @@ async function evaluateSchedule(now: Date, schedule: NormalizedSchedule, radioBo
   }
 
   if (!radioBossOnline) {
-    await markScheduleRecording(recordingId, schedule, "radioboss_offline", {
+    await markScheduleRecording(recordingId, schedule, "radioboss_offline", existing, {
       errorMessageSafe: "RadioBOSS tidak terdeteksi saat jadwal rekaman.",
     });
     return;
@@ -230,7 +224,7 @@ async function evaluateSchedule(now: Date, schedule: NormalizedSchedule, radioBo
   );
 
   if (commandId) {
-    await markScheduleRecording(recordingId, schedule, "ready", {
+    await markScheduleRecording(recordingId, schedule, "ready", existing, {
       startCommandId: commandId,
       errorMessageSafe: null,
     });

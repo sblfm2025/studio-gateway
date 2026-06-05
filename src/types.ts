@@ -248,12 +248,3 @@ export interface SongRequest {
   confidence?: number;
   updatedAt?: any;
 }
-
-export interface MusicLibraryIndexTrack {
-  id: string;
-  title: string;
-  artist?: string;
-  filePath: string;
-  normalizedTitle?: string;
-  normalizedArtist?: string;
-}

@@ -33,6 +33,20 @@ type ScheduleOverride = {
 };
 
 const dayNames = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+let scheduleCache:
+  | {
+      loadedAt: number;
+      broadcastSchedules: NormalizedSchedule[];
+      weeklySlots: WeeklyScheduleSlot[];
+      overrides: ScheduleOverride[];
+    }
+  | null = null;
+
+function getScheduleCacheTtlMs(): number {
+  const raw = Number(process.env.SCHEDULE_CACHE_TTL_SECONDS || 120);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 120000;
+  return Math.min(600, Math.max(30, raw)) * 1000;
+}
 
 function toDate(value: any): Date | null {
   if (!value) return null;
@@ -224,6 +238,31 @@ async function getScheduleOverrides(): Promise<ScheduleOverride[]> {
     .filter((override: ScheduleOverride | null): override is ScheduleOverride => Boolean(override));
 }
 
+async function getCachedScheduleSources(): Promise<{
+  broadcastSchedules: NormalizedSchedule[];
+  weeklySlots: WeeklyScheduleSlot[];
+  overrides: ScheduleOverride[];
+}> {
+  const now = Date.now();
+  if (scheduleCache && now - scheduleCache.loadedAt < getScheduleCacheTtlMs()) {
+    return scheduleCache;
+  }
+
+  const [broadcastSchedules, weeklySlots, overrides] = await Promise.all([
+    getBroadcastSchedules(),
+    getWeeklyScheduleSlots(),
+    getScheduleOverrides(),
+  ]);
+
+  scheduleCache = {
+    loadedAt: now,
+    broadcastSchedules,
+    weeklySlots,
+    overrides,
+  };
+  return scheduleCache;
+}
+
 function datesNear(now: Date): Date[] {
   return [-1, 0, 1].map((offset) => {
     const date = new Date(now);
@@ -243,15 +282,13 @@ export async function getSchedulesNearNow(now = new Date()): Promise<NormalizedS
   const minTime = now.getTime() - windowBeforeMs;
   const maxTime = now.getTime() + windowAfterMs;
 
-  const broadcastSchedules = await getBroadcastSchedules();
+  const { broadcastSchedules, weeklySlots, overrides } = await getCachedScheduleSources();
   const nearBroadcastSchedules = broadcastSchedules.filter((schedule) => isNearWindow(schedule, minTime, maxTime));
 
-  const weeklySlots = await getWeeklyScheduleSlots();
   if (weeklySlots.length === 0) {
     return nearBroadcastSchedules;
   }
 
-  const overrides = await getScheduleOverrides();
   const recurringSchedules = datesNear(now).flatMap((date) => {
     const daySlots = weeklySlots.filter((slot) => slot.day === getDayName(date));
     return applyOverrides(daySlots, overrides, date)

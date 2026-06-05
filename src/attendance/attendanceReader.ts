@@ -1,4 +1,4 @@
-import { db, runFirestoreOperation } from "../firebaseClient";
+import { db, Timestamp, runFirestoreOperation } from "../firebaseClient";
 import type { NormalizedSchedule } from "../schedule/scheduleReader";
 
 export type NormalizedAttendance = {
@@ -11,6 +11,19 @@ export type NormalizedAttendance = {
   locationValid?: boolean;
   selfieValid?: boolean;
 };
+let attendanceCache:
+  | {
+      dateKey: string;
+      loadedAt: number;
+      records: NormalizedAttendance[];
+    }
+  | null = null;
+
+function getAttendanceCacheTtlMs(): number {
+  const raw = Number(process.env.ATTENDANCE_CACHE_TTL_SECONDS || 60);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 60000;
+  return Math.min(300, Math.max(15, raw)) * 1000;
+}
 
 function toDate(value: any): Date | null {
   if (!value) return null;
@@ -26,6 +39,18 @@ function formatDateKey(date: Date): string {
     String(date.getMonth() + 1).padStart(2, "0"),
     String(date.getDate()).padStart(2, "0"),
   ].join("-");
+}
+
+function startOfDay(date: Date): Date {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
 }
 
 function normalizeAttendance(id: string, data: Record<string, any>): NormalizedAttendance | null {
@@ -68,21 +93,39 @@ function matchesSchedule(attendance: NormalizedAttendance, schedule: NormalizedS
 
 export async function findValidAttendance(schedule: NormalizedSchedule): Promise<NormalizedAttendance | null> {
   const scheduleDate = formatDateKey(schedule.startsAt);
-  const snapshot = await runFirestoreOperation(
-    "query attendanceRecords",
-    () => db.collection("attendanceRecords").get(),
-  );
+  const now = Date.now();
+  let records: NormalizedAttendance[];
 
-  const records = snapshot.docs
-    .map((item: any) => normalizeAttendance(item.id, item.data()))
-    .filter((item: NormalizedAttendance | null): item is NormalizedAttendance => Boolean(item))
-    .filter((item: NormalizedAttendance) => item.date === scheduleDate)
+  if (attendanceCache && attendanceCache.dateKey === scheduleDate && now - attendanceCache.loadedAt < getAttendanceCacheTtlMs()) {
+    records = attendanceCache.records;
+  } else {
+    const dayStart = startOfDay(schedule.startsAt);
+    const dayEnd = addDays(dayStart, 1);
+    const snapshot = await runFirestoreOperation(
+      "query attendanceRecords by day",
+      () => db
+        .collection("attendanceRecords")
+        .where("checkInAt", ">=", Timestamp.fromDate ? Timestamp.fromDate(dayStart) : dayStart)
+        .where("checkInAt", "<", Timestamp.fromDate ? Timestamp.fromDate(dayEnd) : dayEnd)
+        .get(),
+    );
+
+    records = snapshot.docs
+      .map((item: any) => normalizeAttendance(item.id, item.data()))
+      .filter((item: NormalizedAttendance | null): item is NormalizedAttendance => Boolean(item))
+      .filter((item: NormalizedAttendance) => item.date === scheduleDate);
+    attendanceCache = {
+      dateKey: scheduleDate,
+      loadedAt: now,
+      records,
+    };
+  }
+
+  return records
     .filter((item: NormalizedAttendance) => matchesSchedule(item, schedule))
     .filter((item: NormalizedAttendance) => (
       (item.status === "present" || item.status === "late") &&
       item.validationStatus === "valid"
     ))
-    .sort((left: NormalizedAttendance, right: NormalizedAttendance) => right.checkInAt.getTime() - left.checkInAt.getTime());
-
-  return records[0] ?? null;
+    .sort((left: NormalizedAttendance, right: NormalizedAttendance) => right.checkInAt.getTime() - left.checkInAt.getTime())[0] ?? null;
 }

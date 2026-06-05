@@ -8,7 +8,6 @@ import {
 } from "../firebaseClient";
 import { Logger } from "../logger";
 import type { FirestoreAuditLog, RadiobossCommand, SongRequest } from "../types";
-import { findBestLibraryMatches } from "./musicLibraryMatcher";
 
 const gatewayId = process.env.GATEWAY_ID || "studio-main";
 
@@ -31,12 +30,6 @@ function buildRequestMessage(request: SongRequest): string {
     dedication ? `Dedikasi: ${dedication}` : "",
     message && message !== rawMessage && message !== dedication ? message : "",
   ].filter(Boolean).join(" | ");
-}
-
-function getAutoForwardThreshold(): number {
-  const raw = Number(process.env.SONG_REQUEST_AUTO_FORWARD_MIN_CONFIDENCE || 80);
-  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 80;
-  return Math.min(100, Math.max(50, raw));
 }
 
 function getIntervalMs(): number {
@@ -149,89 +142,50 @@ async function forwardMatchedRequest(request: SongRequest): Promise<void> {
 }
 
 async function processSongRequest(request: SongRequest): Promise<void> {
-  if (request.status === "matched") {
-    if (shouldAutoForward()) await forwardMatchedRequest(request);
-    return;
-  }
-
   const dummyFilePath = getDummyRequestFilePath();
-  if (dummyFilePath) {
-    const dummyRequest: SongRequest = {
-      ...request,
-      status: "matched",
-      matchStatus: "matched",
-      matchedTrackId: "radio-sbl-request-note",
-      matchedFilePath: dummyFilePath,
-      confidence: 100,
-    };
 
-    await setDocument("songRequests", request.id, {
-      status: shouldAutoForward() ? "matched" : "needs_review",
-      matchStatus: "matched",
-      matchedTrackId: dummyRequest.matchedTrackId,
-      matchedFilePath: dummyFilePath,
-      confidence: 100,
-      updatedAt: Timestamp.now(),
-    });
-
-    await writeAuditLog("song_request_dummy_selected", request, "success", {
-      matchedTrackId: dummyRequest.matchedTrackId,
-      dummyFilePath,
-    });
-
-    if (shouldAutoForward()) {
-      await forwardMatchedRequest(dummyRequest);
-    }
-    return;
-  }
-
-  const matches = await findBestLibraryMatches(request);
-  const best = matches[0];
-
-  if (!best) {
+  if (!dummyFilePath) {
     await setDocument("songRequests", request.id, {
       status: "needs_review",
-      matchStatus: "not_found",
+      matchStatus: "unmatched",
       matchedTrackId: null,
       matchedFilePath: null,
       confidence: 0,
       updatedAt: Timestamp.now(),
     });
-    await writeAuditLog("song_request_match_not_found", request, "skipped", {
-      reason: "Tidak ada kandidat di musicLibraryIndex.",
+    await writeAuditLog("song_request_forward_skipped", request, "skipped", {
+      reason: "SONG_REQUEST_DUMMY_FILE_PATH belum dikonfigurasi; request tidak dicek ke musicLibraryIndex.",
     });
     return;
   }
 
-  const isHighConfidence = best.confidence >= getAutoForwardThreshold() && matches.length === 1;
-  const matchedUpdate = {
-    status: isHighConfidence ? "matched" : "needs_review",
-    matchStatus: isHighConfidence ? "matched" : "ambiguous",
-    matchedTrackId: best.id,
-    matchedFilePath: best.filePath,
-    confidence: best.confidence,
-    updatedAt: Timestamp.now(),
+  const directRequest: SongRequest = {
+    ...request,
+    status: "matched",
+    matchStatus: "matched",
+    matchedTrackId: "radio-sbl-request-note",
+    matchedFilePath: dummyFilePath,
+    confidence: 100,
   };
-  await setDocument("songRequests", request.id, {
-    ...matchedUpdate,
-  });
 
-  await writeAuditLog("song_request_matched", request, "success", {
-    matchStatus: isHighConfidence ? "matched" : "ambiguous",
-    matchedTrackId: best.id,
-    confidence: best.confidence,
-  });
-
-  if (isHighConfidence && shouldAutoForward()) {
-    await forwardMatchedRequest({
-      ...request,
-      status: "matched",
+  if (!shouldAutoForward()) {
+    await setDocument("songRequests", request.id, {
+      status: "needs_review",
       matchStatus: "matched",
-      matchedTrackId: best.id,
-      matchedFilePath: best.filePath,
-      confidence: best.confidence,
+      matchedTrackId: directRequest.matchedTrackId,
+      matchedFilePath: dummyFilePath,
+      confidence: 100,
+      updatedAt: Timestamp.now(),
     });
+    await writeAuditLog("song_request_direct_forward_disabled", request, "skipped", {
+      matchedTrackId: directRequest.matchedTrackId,
+      dummyFilePath,
+      reason: "Auto-forward ke RadioBOSS nonaktif.",
+    });
+    return;
   }
+
+  await forwardMatchedRequest(directRequest);
 }
 
 export async function processPendingSongRequests(): Promise<void> {
@@ -253,7 +207,7 @@ let isProcessing = false;
 export function startSongRequestWorker(): NodeJS.Timeout {
   const intervalMs = getIntervalMs();
   Logger.info(
-    `[SongRequestWorker] Aktif. Matching request setiap ${intervalMs / 1000} detik. Auto-forward: ${shouldAutoForward() ? "on" : "off"}.`,
+    `[SongRequestWorker] Aktif. Forward request setiap ${intervalMs / 1000} detik tanpa cek musicLibraryIndex. Auto-forward: ${shouldAutoForward() ? "on" : "off"}.`,
   );
 
   const run = async () => {

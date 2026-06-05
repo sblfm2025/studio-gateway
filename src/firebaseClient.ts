@@ -315,12 +315,13 @@ export async function setDocument(
   docId: string,
   data: object,
   merge = true,
-) {
+): Promise<boolean> {
   const operation = `set ${collection}/${docId}`;
-  if (shouldSkipFirestoreOperation(operation)) return;
+  if (shouldSkipFirestoreOperation(operation)) return false;
 
   try {
     await runFirestoreOperation(operation, () => db.collection(collection).doc(docId).set(data, { merge }));
+    return true;
   } catch (err: any) {
     Logger.error(
       `[Firestore] Gagal menulis dokumen "${collection}/${docId}": ${err.message || String(err)}`,

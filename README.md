@@ -202,6 +202,12 @@ AUTO_RECORDING_ENABLED=false
 AUTO_RECORDING_INTERVAL_SECONDS=120
 FIRESTORE_OP_TIMEOUT_MS=15000
 FIRESTORE_QUOTA_COOLDOWN_SECONDS=300
+NOW_PLAYING_MIN_WRITE_SECONDS=10
+STATUS_MIN_WRITE_SECONDS=60
+HEARTBEAT_INTERVAL_SECONDS=60
+ERROR_AUDIT_MIN_SECONDS=300
+SCHEDULE_CACHE_TTL_SECONDS=120
+ATTENDANCE_CACHE_TTL_SECONDS=60
 RADIO_SBL_RECORDING_ROOT=D:\RadioSBL_REKAMAN
 RADIO_SBL_MUSIC_LIBRARY_ROOT=D:\RadioSBL_AUDIO
 ```
@@ -216,11 +222,12 @@ Gateway juga dapat membantu alur request lagu dari aplikasi Radio SBL tanpa memb
 
 Alur aman yang dipakai:
 * Aplikasi menulis request ke `songRequests`.
-* Gateway membaca request berstatus `new` atau `notified`.
-* Gateway mencocokkan judul dan penyanyi dengan `musicLibraryIndex`.
-* Jika cocok kuat, request otomatis dibuatkan command `ADD_TRACK_TO_QUEUE`.
-* Command worker memvalidasi path lalu mengirim action `songrequest` ke RadioBOSS.
-* Jika ambigu atau tidak ditemukan, request ditandai `needs_review` untuk diperiksa operator.
+* Gateway membaca request berstatus `new`, `notified`, `pending_review`, atau `matched`.
+* Gateway tidak mencocokkan judul dan penyanyi ke `musicLibraryIndex`.
+* Gateway memakai `SONG_REQUEST_DUMMY_FILE_PATH` sebagai file dummy/silent dan meneruskan teks request lengkap ke message Song Requests RadioBOSS.
+* Jika auto-forward aktif, request otomatis dibuatkan command `ADD_TRACK_TO_QUEUE`.
+* Command worker memvalidasi path dummy lalu mengirim action `songrequest` ke RadioBOSS.
+* Jika `SONG_REQUEST_DUMMY_FILE_PATH` belum dikonfigurasi, request ditandai `needs_review` tanpa scan library.
 * Gateway tetap menulis audit log sehingga alur bisa diinspeksi manual tanpa menjadi proses approve wajib.
 
 Konfigurasi tambahan di `.env`:
@@ -228,14 +235,13 @@ Konfigurasi tambahan di `.env`:
 SONG_REQUEST_WORKER_ENABLED=true
 SONG_REQUEST_WORKER_INTERVAL_SECONDS=120
 SONG_REQUEST_AUTO_FORWARD_TO_RADIOBOSS=true
-SONG_REQUEST_AUTO_FORWARD_MIN_CONFIDENCE=80
 SONG_REQUEST_DUMMY_FILE_PATH=E:\_SBL_REQUEST_NOTE.mp3
 RADIO_SBL_MUSIC_LIBRARY_ROOT=D:\RadioSBL_AUDIO
 ```
 
-Dengan `SONG_REQUEST_DUMMY_FILE_PATH` terisi, gateway tidak perlu mencocokkan request ke `musicLibraryIndex`. Semua request yang masuk akan memakai file dummy/silent tersebut dan teks request lengkap dikirim ke kolom message Song Requests RadioBOSS. File dummy boleh berada di luar `RADIO_SBL_MUSIC_LIBRARY_ROOT`, tetapi hanya path yang sama persis dengan `SONG_REQUEST_DUMMY_FILE_PATH` yang diizinkan.
+Dengan `SONG_REQUEST_DUMMY_FILE_PATH` terisi, gateway tidak mencocokkan request ke `musicLibraryIndex`. Semua request yang masuk akan memakai file dummy/silent tersebut dan teks request lengkap dikirim ke kolom message Song Requests RadioBOSS. File dummy boleh berada di luar `RADIO_SBL_MUSIC_LIBRARY_ROOT`, tetapi hanya path yang sama persis dengan `SONG_REQUEST_DUMMY_FILE_PATH` yang diizinkan.
 
-Jika `SONG_REQUEST_DUMMY_FILE_PATH` dikosongkan, gateway kembali memakai mode lama: request dicocokkan ke `musicLibraryIndex`, lalu yang cocok kuat otomatis dibuatkan command dan dikirim ke daftar **Song Requests** di RadioBOSS.
+Jika `SONG_REQUEST_DUMMY_FILE_PATH` dikosongkan, gateway tidak melakukan fallback ke `musicLibraryIndex`; request akan ditandai `needs_review` agar tidak menambah beban read Firestore.
 
 Catatan operasional RadioBOSS:
 * Command `ADD_TRACK_TO_QUEUE` diterjemahkan menjadi action API `songrequest` dengan `filename` full path file lokal dan `message` aman.
