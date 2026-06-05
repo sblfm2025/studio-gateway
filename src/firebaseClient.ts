@@ -9,6 +9,9 @@ dotenv.config();
 const projectId = process.env.FIREBASE_PROJECT_ID || "radiosbl";
 let serviceAccountPath =
   process.env.GOOGLE_APPLICATION_CREDENTIALS || "./service-account.json";
+const recordingProjectId = process.env.RECORDING_FIREBASE_PROJECT_ID || "";
+let recordingServiceAccountPath =
+  process.env.RECORDING_GOOGLE_APPLICATION_CREDENTIALS || "";
 const isMockFirebase = process.env.MOCK_FIREBASE === "true";
 
 // Mock Implementation untuk Pengujian Offline
@@ -88,10 +91,39 @@ const mockDb = {
 };
 
 let dbInstance: any;
+let recordingDbInstance: any;
 let timestampInstance: any;
 let fieldValueInstance: any;
 let quotaCooldownUntil = 0;
 let lastQuotaCooldownLogAt = 0;
+
+function resolveCredentialPath(filePath: string): string {
+  if (path.isAbsolute(filePath)) return filePath;
+  return path.resolve(process.cwd(), filePath);
+}
+
+function loadServiceAccount(filePath: string, label: string) {
+  const resolvedPath = resolveCredentialPath(filePath);
+
+  if (!fs.existsSync(resolvedPath)) {
+    Logger.error(
+      `[Firebase] ERROR: File kredensial ${label} tidak ditemukan di: ${resolvedPath}`,
+    );
+    process.exit(1);
+  }
+
+  try {
+    return {
+      resolvedPath,
+      serviceAccount: JSON.parse(fs.readFileSync(resolvedPath, "utf8")),
+    };
+  } catch (err: any) {
+    Logger.error(
+      `[Firebase] ERROR FATAL: Gagal memuat kredensial ${label}: ${err.message || String(err)}`,
+    );
+    process.exit(1);
+  }
+}
 
 function getFirestoreOpTimeoutMs(): number {
   const raw = Number(process.env.FIRESTORE_OP_TIMEOUT_MS || 30000);
@@ -257,6 +289,7 @@ if (isMockFirebase) {
   Logger.info("==================================================");
 
   dbInstance = mockDb;
+  recordingDbInstance = mockDb;
   timestampInstance = {
     now: () => new Date(),
   };
@@ -264,53 +297,53 @@ if (isMockFirebase) {
     serverTimestamp: () => new Date(),
   };
 } else {
-  // Ubah relative path ke absolute path secara aman
-  if (!path.isAbsolute(serviceAccountPath)) {
-    serviceAccountPath = path.resolve(process.cwd(), serviceAccountPath);
-  }
-
   Logger.info(`[Firebase] Menginisialisasi proyek ID: "${projectId}"`);
 
-  // Validasi keberadaan file credential secara ketat saat live mode
-  if (!fs.existsSync(serviceAccountPath)) {
-    Logger.error(
-      `[Firebase] ERROR: File service-account.json tidak ditemukan di: ${serviceAccountPath}`,
-    );
-    Logger.error(
-      `[Firebase] Harap siapkan service-account.json sesuai panduan INSTALL_WINDOWS.md sebelum menggunakan live mode.`,
-    );
-    process.exit(1);
-  }
-
-  try {
-    const serviceAccount = JSON.parse(
-      fs.readFileSync(serviceAccountPath, "utf8"),
-    );
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      projectId,
-    });
-    Logger.info(
-      `[Firebase] Inisialisasi berhasil menggunakan berkas kredensial di: ${serviceAccountPath}`,
-    );
-  } catch (err: any) {
-    Logger.error(
-      `[Firebase] ERROR FATAL: Gagal memuat berkas service-account.json: ${err.message || String(err)}`,
-    );
-    process.exit(1);
-  }
+  const mainCredential = loadServiceAccount(serviceAccountPath, "utama");
+  admin.initializeApp({
+    credential: admin.credential.cert(mainCredential.serviceAccount),
+    projectId,
+  });
+  Logger.info(
+    `[Firebase] Inisialisasi utama berhasil menggunakan berkas kredensial di: ${mainCredential.resolvedPath}`,
+  );
 
   dbInstance = admin.firestore();
+  recordingDbInstance = dbInstance;
+
+  if (recordingProjectId) {
+    if (!recordingServiceAccountPath) {
+      Logger.warn(
+        "[Firebase Recording] RECORDING_FIREBASE_PROJECT_ID terisi, tetapi RECORDING_GOOGLE_APPLICATION_CREDENTIALS kosong. Recording tetap memakai Firebase utama.",
+      );
+    } else {
+      Logger.info(`[Firebase Recording] Menginisialisasi proyek ID: "${recordingProjectId}"`);
+      const recordingCredential = loadServiceAccount(recordingServiceAccountPath, "recording");
+      const recordingApp = admin.initializeApp(
+        {
+          credential: admin.credential.cert(recordingCredential.serviceAccount),
+          projectId: recordingProjectId,
+        },
+        "recording",
+      );
+      recordingDbInstance = recordingApp.firestore();
+      Logger.info(
+        `[Firebase Recording] Inisialisasi berhasil menggunakan berkas kredensial di: ${recordingCredential.resolvedPath}`,
+      );
+    }
+  }
+
   timestampInstance = admin.firestore.Timestamp;
   fieldValueInstance = admin.firestore.FieldValue;
 }
 
 export const db = dbInstance;
+export const recordingDb = recordingDbInstance;
 export const Timestamp = timestampInstance;
 export const FieldValue = fieldValueInstance;
 
-// Helper Write Terpadu: menulis dokumen secara konsisten
-export async function setDocument(
+async function setDocumentOnDb(
+  targetDb: any,
   collection: string,
   docId: string,
   data: object,
@@ -320,7 +353,7 @@ export async function setDocument(
   if (shouldSkipFirestoreOperation(operation)) return false;
 
   try {
-    await runFirestoreOperation(operation, () => db.collection(collection).doc(docId).set(data, { merge }));
+    await runFirestoreOperation(operation, () => targetDb.collection(collection).doc(docId).set(data, { merge }));
     return true;
   } catch (err: any) {
     Logger.error(
@@ -328,6 +361,25 @@ export async function setDocument(
     );
     throw err;
   }
+}
+
+// Helper Write Terpadu: menulis dokumen secara konsisten
+export async function setDocument(
+  collection: string,
+  docId: string,
+  data: object,
+  merge = true,
+): Promise<boolean> {
+  return setDocumentOnDb(db, collection, docId, data, merge);
+}
+
+export async function setRecordingDocument(
+  collection: string,
+  docId: string,
+  data: object,
+  merge = true,
+): Promise<boolean> {
+  return setDocumentOnDb(recordingDb, collection, docId, data, merge);
 }
 
 // Helper Write Terpadu: menambahkan dokumen acak secara konsisten

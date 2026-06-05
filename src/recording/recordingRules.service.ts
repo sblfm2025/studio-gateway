@@ -1,4 +1,4 @@
-import { db, runFirestoreOperation } from "../firebaseClient";
+import { recordingDb, runFirestoreOperation } from "../firebaseClient";
 import type { ProgramRecordingRule } from "../types";
 
 export function getDefaultRecordingRule(programId: string): ProgramRecordingRule {
@@ -23,7 +23,7 @@ export function getDefaultRecordingRule(programId: string): ProgramRecordingRule
 export async function getRecordingRule(programId: string): Promise<ProgramRecordingRule> {
   const snapshot = await runFirestoreOperation(
     `get programRecordingRules/${programId}`,
-    () => db.collection("programRecordingRules").doc(programId).get(),
+    () => recordingDb.collection("programRecordingRules").doc(programId).get(),
   );
   if (!snapshot.exists) return getDefaultRecordingRule(programId);
   return {
@@ -40,7 +40,7 @@ export async function getRecordingRuleForSchedule(
 ): Promise<ProgramRecordingRule> {
   const scheduleSnapshot = await runFirestoreOperation(
     `get programRecordingRules/${scheduleId}`,
-    () => db.collection("programRecordingRules").doc(scheduleId).get(),
+    () => recordingDb.collection("programRecordingRules").doc(scheduleId).get(),
   );
   if (scheduleSnapshot.exists) {
     const data = scheduleSnapshot.data() as Partial<ProgramRecordingRule>;

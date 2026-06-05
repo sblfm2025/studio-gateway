@@ -1,4 +1,4 @@
-import { db, Timestamp, runFirestoreOperation, shouldSkipFirestoreOperation } from "../firebaseClient";
+import { db, recordingDb, Timestamp, runFirestoreOperation, shouldSkipFirestoreOperation } from "../firebaseClient";
 import { Logger } from "../logger";
 import type { ProgramRecording, ProgramRecordingRule, RadiobossCommand } from "../types";
 import { findValidAttendance } from "../attendance/attendanceReader";
@@ -154,7 +154,7 @@ function isStopDue(now: Date, recording: ProgramRecording, rule: ProgramRecordin
 async function getRecordingById(recordingId: string): Promise<ProgramRecording | null> {
   const snapshot = await runFirestoreOperation(
     `get programRecordings/${recordingId}`,
-    () => db.collection("programRecordings").doc(recordingId).get(),
+    () => recordingDb.collection("programRecordings").doc(recordingId).get(),
   );
   if (!snapshot.exists) return null;
   return { id: snapshot.id, ...(snapshot.data() as Omit<ProgramRecording, "id">) };
@@ -163,7 +163,7 @@ async function getRecordingById(recordingId: string): Promise<ProgramRecording |
 async function getActiveRecordings(): Promise<ProgramRecording[]> {
   const snapshot = await runFirestoreOperation(
     "query programRecordings active",
-    () => db.collection("programRecordings").where("status", "==", "recording").get(),
+    () => recordingDb.collection("programRecordings").where("status", "==", "recording").get(),
   );
   return snapshot.docs.map((item: any) => ({ id: item.id, ...(item.data() as Omit<ProgramRecording, "id">) }));
 }

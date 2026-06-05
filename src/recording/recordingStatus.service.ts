@@ -1,8 +1,8 @@
-import { db, Timestamp, setDocument, runFirestoreOperation } from "../firebaseClient";
+import { recordingDb, Timestamp, setRecordingDocument, runFirestoreOperation } from "../firebaseClient";
 import type { ProgramRecording, RecordingStatus } from "../types";
 
 export async function upsertProgramRecording(recordingId: string, data: Partial<ProgramRecording>): Promise<void> {
-  await setDocument("programRecordings", recordingId, {
+  await setRecordingDocument("programRecordings", recordingId, {
     ...data,
     recordingId,
     updatedAt: Timestamp.now(),
@@ -48,7 +48,7 @@ export async function upsertProgramRecordingIfChanged(
 export async function getProgramRecording(recordingId: string): Promise<ProgramRecording | null> {
   const snapshot = await runFirestoreOperation(
     `get programRecordings/${recordingId}`,
-    () => db.collection("programRecordings").doc(recordingId).get(),
+    () => recordingDb.collection("programRecordings").doc(recordingId).get(),
   );
   if (!snapshot.exists) return null;
   return { id: snapshot.id, ...(snapshot.data() as Omit<ProgramRecording, "id">) };
@@ -59,7 +59,7 @@ export async function updateRecordingStatus(
   status: RecordingStatus,
   patch: Partial<ProgramRecording> = {},
 ): Promise<void> {
-  await setDocument("programRecordings", recordingId, {
+  await setRecordingDocument("programRecordings", recordingId, {
     ...patch,
     status,
     updatedAt: Timestamp.now(),
