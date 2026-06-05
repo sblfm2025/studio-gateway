@@ -363,6 +363,7 @@ async function updateGatewayHeartbeat(options: {
   status: "online" | "offline";
   lastSeenAt: any;
 }) {
+  const start = Date.now();
   try {
     const heartbeatData: FirestoreGatewayHeartbeat = {
       gatewayId,
@@ -373,10 +374,14 @@ async function updateGatewayHeartbeat(options: {
       appVersion,
       lastSeenAt: options.lastSeenAt,
     };
+    Logger.info(`[Heartbeat] Mengirim update heartbeat (status=${options.status}) ke Firestore...`);
     await setDocument("radiobossGatewayHeartbeat", gatewayId, heartbeatData);
+    const elapsed = Date.now() - start;
+    Logger.info(`[Heartbeat] Heartbeat berhasil diperbarui dalam ${elapsed} ms.`);
   } catch (err) {
+    const elapsed = Date.now() - start;
     Logger.error(
-      `[Heartbeat] Gagal update heartbeat ke Firestore: ${String(err)}`,
+      `[Heartbeat] Gagal update heartbeat ke Firestore setelah ${elapsed} ms: ${String(err)}`,
     );
   }
 }

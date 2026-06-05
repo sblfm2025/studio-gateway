@@ -99,6 +99,50 @@ studio-gateway/
 
 ---
 
+## 🔁 Startup Otomatis di Windows (Autostart)
+
+Untuk membuat agen otomatis berjalan saat pengguna Windows login, ada dua opsi yang disediakan di repository:
+
+- Jadwalkan tugas Task Scheduler (direkomendasikan karena lebih fleksibel dan dapat dijalankan tanpa elevated rights pada banyak konfigurasi).
+- Tambah entri `HKCU Run` sebagai fallback jika pembuatan task gagal karena izin.
+
+Script instalasi sudah tersedia: jalankan dari folder proyek pada PC Studio (di mana `start-hidden.vbs` berada):
+```powershell
+# Jalankan dengan PowerShell (jalankan sebagai user yang ingin memulai agen pada login)
+npm run install-autostart
+```
+
+Script ini akan mencoba membuat Scheduled Task bernama "RadioSBL Studio Gateway Agent" yang menjalankan `start-hidden.vbs` saat pengguna login. Jika pembuatan task gagal karena masalah izin, script akan membuat entri di `HKCU:\Software\Microsoft\Windows\CurrentVersion\Run` sebagai cadangan.
+
+Untuk menghapus autostart yang dibuat oleh script, jalankan:
+```powershell
+npm run uninstall-autostart
+```
+
+Verifikasi:
+- Buka Task Scheduler (`taskschd.msc`) dan cari `RadioSBL Studio Gateway Agent`.
+- Atau cek nilai Run key:
+```powershell
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' | Select-Object -Property *
+```
+
+Catatan operasional:
+- Jalankan `npm run build` sebelum menambahkan autostart agar `dist/index.js` tersedia.
+- `start-hidden.vbs` menjalankan `start-gateway.bat` secara tersembunyi dan menulis output ke `vbs-run.log` di folder proyek.
+- Jika Anda menggunakan akun layanan atau membutuhkan agen berjalan saat sistem boot (bukan login user), gunakan Task Scheduler dengan trigger `At startup` atau konfigurasikan service Windows (diperlukan langkah tambahan dan hak administrator).
+
+### Verifikasi cepat setelah instalasi
+Setelah menjalankan `npm run install-autostart` dan login ulang, jalankan perintah berikut untuk memeriksa status:
+
+```powershell
+# Pastikan berada di folder proyek
+npm run verify-deploy
+```
+
+Perintah ini akan memeriksa keberadaan `dist/index.js`, scheduled task, HKCU Run entry, proses `node` yang menjalankan `dist/index.js`, serta menampilkan baris terakhir dari `gateway.log` dan `vbs-run.log` bila tersedia.
+
+---
+
 ## 🧪 Simulasi & Pengujian Mandiri
 
 Agen dilengkapi dengan modul simulasi penuh untuk mempermudah pengujian luring (*offline testing*) tanpa bergantung pada aplikasi asli:

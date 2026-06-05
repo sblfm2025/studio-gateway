@@ -12,6 +12,9 @@
     "inspect:request": "ts-node src/tools/inspectSongRequests.ts",
     "inspect:requests": "ts-node src/tools/inspectSongRequests.ts",
     "format": "prettier --write \"src/**/*.ts\" \"sbl-app-templates/**/*.{ts,tsx}\""
+    ,"install-autostart":"powershell -ExecutionPolicy Bypass -File install-autostart.ps1"
+    ,"uninstall-autostart":"powershell -ExecutionPolicy Bypass -File uninstall-autostart.ps1"
+    ,"verify-deploy":"powershell -ExecutionPolicy Bypass -File verify-deploy.ps1"
   },
   "dependencies": {
     "@google-cloud/firestore": "^8.6.0",

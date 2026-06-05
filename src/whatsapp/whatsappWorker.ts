@@ -21,6 +21,8 @@ const QRCode = require("qrcode") as {
 
 let started = false;
 let reconnectTimer: NodeJS.Timeout | null = null;
+let whatsappReconnectAttempts = 0;
+const MAX_WHATSAPP_RECONNECT_ATTEMPTS = 3;
 
 const QR_TEMP_PREFIX = "wa-qr-";
 function getQrTtlMs(): number {
@@ -110,6 +112,16 @@ function shortenLogText(value: string): string {
 
 function shouldReconnect(statusCode: number | undefined, disconnectReason: any): boolean {
   return statusCode !== disconnectReason.loggedOut;
+}
+
+function formatDisconnectReason(reason: any): string {
+  try {
+    if (!reason) return "unknown";
+    const safe = JSON.stringify(reason, Object.getOwnPropertyNames(reason));
+    return safe.length > 500 ? `${safe.slice(0, 497)}...` : safe;
+  } catch {
+    return String(reason);
+  }
 }
 
 async function handleIncomingMessage(sock: WhatsAppSocket, message: any): Promise<void> {
@@ -236,12 +248,30 @@ async function connectWhatsApp(): Promise<void> {
 
     if (connection === "open") {
       Logger.info("[WhatsAppWorker] WhatsApp terhubung.");
+      whatsappReconnectAttempts = 0;
     }
 
     if (connection === "close") {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const isConflict = statusCode === 440;
+      if (isConflict) {
+        Logger.warn(
+          `[WhatsAppWorker] Koneksi WhatsApp tertutup (440 conflict): session mungkin tergantikan oleh device lain atau login ulang di akun yang sama.`,
+        );
+      }
+
       if (shouldReconnect(statusCode, DisconnectReason)) {
-        Logger.warn(`[WhatsAppWorker] Koneksi WhatsApp tertutup (${statusCode || "unknown"}). Mencoba ulang dalam 10 detik.`);
+        if (isConflict && whatsappReconnectAttempts >= MAX_WHATSAPP_RECONNECT_ATTEMPTS) {
+          Logger.error(
+            `[WhatsAppWorker] Konflik session WhatsApp berulang (${whatsappReconnectAttempts} kali). Hentikan reconnect otomatis sampai intervensi manual. Reason: ${formatDisconnectReason(lastDisconnect)}`,
+          );
+          return;
+        }
+
+        whatsappReconnectAttempts += 1;
+        Logger.warn(
+          `[WhatsAppWorker] Koneksi WhatsApp tertutup (${statusCode || "unknown"}). Mencoba ulang dalam 10 detik (attempt ${whatsappReconnectAttempts}). Reason: ${formatDisconnectReason(lastDisconnect)}`,
+        );
         if (reconnectTimer) clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(() => {
           connectWhatsApp().catch((error) => Logger.error(`[WhatsAppWorker] Reconnect gagal: ${String(error)}`));
