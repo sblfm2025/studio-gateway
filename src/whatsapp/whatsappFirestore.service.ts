@@ -1,4 +1,4 @@
-import { db, Timestamp, runFirestoreOperation } from "../firebaseClient";
+import { requestDb, Timestamp, runFirestoreOperation } from "../firebaseClient";
 import type { WhatsAppRequestDocument, WhatsAppRequestSaveInput } from "./whatsappTypes";
 
 function maskPhone(phone: string): string {
@@ -12,7 +12,7 @@ async function findExistingRequestId(whatsappMessageId?: string): Promise<string
 
   const snapshot = await runFirestoreOperation(
     "query songRequests whatsapp duplicate",
-    () => db
+    () => requestDb
       .collection("songRequests")
       .where("whatsappMessageId", "==", whatsappMessageId)
       .limit(1)
@@ -51,7 +51,7 @@ export async function saveWhatsAppSongRequest(input: WhatsAppRequestSaveInput): 
 
   const ref = await runFirestoreOperation(
     "add songRequests whatsapp",
-    () => db.collection("songRequests").add(documentData),
+    () => requestDb.collection("songRequests").add(documentData),
   );
   return ref.id;
 }

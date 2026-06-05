@@ -1,5 +1,4 @@
 import * as http from "http";
-import * as url from "url";
 
 const PORT = 9100; // Menggunakan port 9100 untuk mock agar tidak tabrakan dengan RadioBOSS asli di 9001
 
@@ -33,14 +32,13 @@ let currentPosMs = 30000; // Mulai posisi di detik 30
 let playerState = "play";
 
 const server = http.createServer((req, res) => {
-  const parsedUrl = url.parse(req.url || "", true);
-  const query = parsedUrl.query;
+  const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
+  const action = requestUrl.searchParams.get("action");
 
   // Hanya layani request dengan action=playbackinfo
-  if (query.action === "playbackinfo") {
-    const password = query.pass;
+  if (action === "playbackinfo") {
     console.log(
-      `[Mock RadioBOSS] Menerima request API playbackinfo. Pass: "${password}"`,
+      `[Mock RadioBOSS] Menerima request API playbackinfo. Pass: "[REDACTED]"`,
     );
 
     const currentTrack = playlist[currentTrackIndex];
@@ -96,7 +94,7 @@ const server = http.createServer((req, res) => {
   } else {
     // Return error 400 jika parameter action tidak valid atau bukan playbackinfo
     console.warn(
-      `[Mock RadioBOSS] Request ditolak. Aksi "${query.action}" tidak didukung.`,
+      `[Mock RadioBOSS] Request ditolak. Aksi "${action || ""}" tidak didukung.`,
     );
     res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
     res.end(

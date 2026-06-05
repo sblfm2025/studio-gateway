@@ -1,0 +1,89 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function hasOnly(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasAll(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function changedOnly(fields) {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly(fields);
+    }
+
+    function validProgramRecordingRulePayload() {
+      return hasOnly([
+        'programId',
+        'scheduleId',
+        'programName',
+        'recordingEnabled',
+        'requireAttendance',
+        'autoStart',
+        'autoStop',
+        'allowManualOverride',
+        'startGraceMinutes',
+        'stopGraceMinutes',
+        'maxOverrunMinutes',
+        'minDurationMinutes',
+        'folderSlug',
+        'format',
+        'storageRootKey',
+        'createdAt',
+        'createdBy',
+        'updatedAt',
+        'updatedBy'
+      ])
+      && hasAll([
+        'programId',
+        'programName',
+        'recordingEnabled',
+        'requireAttendance',
+        'autoStart',
+        'autoStop',
+        'allowManualOverride',
+        'startGraceMinutes',
+        'stopGraceMinutes',
+        'maxOverrunMinutes',
+        'minDurationMinutes',
+        'folderSlug',
+        'format',
+        'storageRootKey'
+      ])
+      && (!('scheduleId' in request.resource.data) || request.resource.data.scheduleId is string)
+      && request.resource.data.recordingEnabled is bool
+      && request.resource.data.requireAttendance is bool
+      && request.resource.data.autoStart is bool
+      && request.resource.data.autoStop is bool
+      && request.resource.data.allowManualOverride is bool
+      && request.resource.data.format in ['mp3', 'wav'];
+    }
+
+    match /programRecordingRules/{ruleId} {
+      allow read: if true;
+      allow create, update: if validProgramRecordingRulePayload()
+        && (
+          request.resource.data.programId == ruleId
+          || (
+            'scheduleId' in request.resource.data
+            && request.resource.data.scheduleId == ruleId
+          )
+        );
+      allow delete: if false;
+    }
+
+    match /programRecordings/{recordingId} {
+      allow read: if true;
+      allow create: if false;
+      allow update: if changedOnly(['status', 'errorMessageSafe', 'updatedAt'])
+        && request.resource.data.status in ['manual_override'];
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { db } from "../firebaseClient";
+import { requestDb } from "../firebaseClient";
 
 function toIso(value: any): string | null {
   if (!value) return null;
@@ -18,7 +18,7 @@ function short(value: unknown, max = 120): string | null {
 async function main() {
   const limitArg = Number(process.argv[2] || 10);
   const limit = Number.isFinite(limitArg) ? Math.min(30, Math.max(1, limitArg)) : 10;
-  const snapshot = await db
+  const snapshot = await requestDb
     .collection("songRequests")
     .orderBy("createdAt", "desc")
     .limit(limit)

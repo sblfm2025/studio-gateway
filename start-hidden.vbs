@@ -8,5 +8,6 @@ strShortPath = objFSO.GetFile(strBatPath).ShortPath
 Set objShell = CreateObject("WScript.Shell")
 objShell.CurrentDirectory = strPath
 
-' Jalankan file batch secara senyap dan alihkan seluruh output lognya ke berkas vbs-run.log
+' Jalankan file batch secara senyap dan alihkan seluruh output lognya ke berkas vbs-run.log.
+' Task Scheduler di PC ini masih punya batas 72 jam, jadi proses dilepas agar tidak dipaksa berhenti.
 objShell.Run "cmd.exe /c " & strShortPath & " > vbs-run.log 2>&1", 0, False

@@ -89,7 +89,10 @@ export interface FirestoreGatewayHeartbeat {
   status: "online" | "offline";
   mode: "read_only" | "read_write_command_queue";
   appVersion: string;
+  version?: string;
+  heartbeatIntervalSeconds: number;
   lastSeenAt: any; // Firestore Timestamp;
+  updatedAt: any; // Firestore Timestamp;
 }
 
 // Skema untuk Firestore: radiobossTrackHistory/{trackId}

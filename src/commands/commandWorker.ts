@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import {
-  db,
+  gatewayDb,
   Timestamp,
   setDocument,
   addDocument,
@@ -23,6 +23,7 @@ import {
 import { sendAllowedRadioBossCommand, sendRadioBossAction } from "../radioboss/radiobossCommandClient";
 
 const COMMAND_BATCH_LIMIT = 5;
+const COMMAND_FETCH_LIMIT = 50;
 const gatewayId = process.env.GATEWAY_ID || "studio-main";
 
 function getCommandPollIntervalMs(): number {
@@ -146,10 +147,10 @@ async function writeAuditLog(
 async function getPendingCommands(): Promise<RadiobossCommand[]> {
   const snapshot = await runFirestoreOperation(
     "query radiobossCommands pending",
-    () => db
+    () => gatewayDb
       .collection("radiobossCommands")
       .where("status", "in", ["pending", "retryable"])
-      .limit(COMMAND_BATCH_LIMIT)
+      .limit(COMMAND_FETCH_LIMIT)
       .get(),
   );
 
@@ -161,7 +162,8 @@ async function getPendingCommands(): Promise<RadiobossCommand[]> {
       const rightPriority = priorityScore[right.priority || "normal"];
       if (leftPriority !== rightPriority) return leftPriority - rightPriority;
       return toMillis(left.createdAt || left.requestedAt) - toMillis(right.createdAt || right.requestedAt);
-    });
+    })
+    .slice(0, COMMAND_BATCH_LIMIT);
 }
 
 async function markExecuting(commandId: string) {
@@ -201,7 +203,7 @@ async function findSuccessfulCommandWithSameDedupeKey(command: RadiobossCommand)
 
   const snapshot = await runFirestoreOperation(
     "query radiobossCommands duplicate",
-    () => db
+    () => gatewayDb
       .collection("radiobossCommands")
       .where("dedupeKey", "==", command.dedupeKey)
       .where("status", "==", "success")
@@ -274,18 +276,14 @@ async function executeStartRecording(command: RadiobossCommand): Promise<Record<
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
-  const recordingData: Partial<ProgramRecording> = {
+  const baseRecordingData: Partial<ProgramRecording> = {
     programId,
     programName: programName || rule.programName || programId,
     scheduleId,
     announcerId,
     announcerName,
-    status: "recording",
     plannedStartAt: toTimestamp(command.payload.plannedStartAt, Timestamp.now()),
     plannedStopAt: toTimestamp(command.payload.plannedStopAt || command.payload.plannedEndAt, null),
-    startedAt: Timestamp.now(),
-    stoppedAt: null,
-    durationSeconds: null,
     fileName,
     filePath,
     gatewayId,
@@ -295,8 +293,31 @@ async function executeStartRecording(command: RadiobossCommand): Promise<Record<
     errorMessageSafe: null,
   };
 
-  await upsertProgramRecording(recordingId, recordingData);
-  await sendAllowedRadioBossCommand(`streamarchive ${quoteCommandArg(filePath)}`);
+  await upsertProgramRecording(recordingId, {
+    ...baseRecordingData,
+    status: "ready",
+    stoppedAt: null,
+    durationSeconds: null,
+  });
+
+  try {
+    await sendAllowedRadioBossCommand(`streamarchive ${quoteCommandArg(filePath)}`);
+  } catch (error) {
+    const safeError = toSafeCommandError(error);
+    await updateRecordingStatus(recordingId, "failed", {
+      errorCode: safeError.errorCode,
+      errorMessageSafe: safeError.errorMessageSafe,
+    });
+    throw error;
+  }
+
+  await upsertProgramRecording(recordingId, {
+    ...baseRecordingData,
+    status: "recording",
+    startedAt: Timestamp.now(),
+    stoppedAt: null,
+    durationSeconds: null,
+  });
   await setRadioBossRecordingState(true, recordingId);
 
   return { recordingId, fileName, filePath };
@@ -413,7 +434,7 @@ async function executeAddTrackToQueue(command: RadiobossCommand): Promise<Record
 
 async function executeRetryCommand(command: RadiobossCommand): Promise<Record<string, any>> {
   const targetCommandId = getString(command.payload, "commandId");
-  const ref = db.collection("radiobossCommands").doc(targetCommandId);
+  const ref = gatewayDb.collection("radiobossCommands").doc(targetCommandId);
   const snapshot = await runFirestoreOperation(
     `get radiobossCommands/${targetCommandId}`,
     () => ref.get(),

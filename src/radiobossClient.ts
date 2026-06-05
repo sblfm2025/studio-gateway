@@ -58,6 +58,9 @@ export async function fetchPlaybackInfoFromRadioBoss(): Promise<string> {
     }
 
     const text = await response.text();
+    if (/^e\d{3}\s*:/i.test(text.trim()) || /^error\b/i.test(text.trim())) {
+      throw new Error(`RadioBOSS API mengembalikan error: ${text.trim()}`);
+    }
     return text;
   } catch (error: any) {
     if (error.name === "AbortError") {

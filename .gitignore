@@ -2,5 +2,12 @@ node_modules/
 dist/
 .env
 service-account.json
+service-account-*.json
+!samples/service-account-*.sample.json
 *.log
 wa-session/
+node
+powershell
+wscript.exe
+studio-gateway@1.0.0
+.gateway-start.lock/

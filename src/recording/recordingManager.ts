@@ -1,4 +1,4 @@
-import { db, recordingDb, Timestamp, runFirestoreOperation, shouldSkipFirestoreOperation } from "../firebaseClient";
+import { gatewayDb, recordingDb, Timestamp, runFirestoreOperation, shouldSkipFirestoreOperation } from "../firebaseClient";
 import { Logger } from "../logger";
 import type { ProgramRecording, ProgramRecordingRule, RadiobossCommand } from "../types";
 import { findValidAttendance } from "../attendance/attendanceReader";
@@ -55,7 +55,7 @@ async function getRuleForSchedule(schedule: NormalizedSchedule): Promise<Program
 async function isRadioBossOnline(): Promise<boolean> {
   const snapshot = await runFirestoreOperation(
     "get radiobossStatus/current",
-    () => db.collection("radiobossStatus").doc("current").get(),
+    () => gatewayDb.collection("radiobossStatus").doc("current").get(),
   );
   const data = snapshot.exists ? snapshot.data() : null;
   return Boolean(data?.radioBossOnline ?? data?.online);
@@ -89,9 +89,9 @@ async function createSystemCommand(
     updatedAt: Timestamp.now(),
   };
 
-  const ref = db.collection("radiobossCommands").doc(commandId);
+  const ref = gatewayDb.collection("radiobossCommands").doc(commandId);
 
-  if (typeof db.runTransaction !== "function") {
+  if (typeof gatewayDb.runTransaction !== "function") {
     const snapshot = await runFirestoreOperation(
       `get radiobossCommands/${commandId}`,
       () => ref.get(),
@@ -104,7 +104,7 @@ async function createSystemCommand(
     return commandId;
   }
 
-  return runFirestoreOperation(`transaction create radiobossCommands/${commandId}`, () => db.runTransaction(async (transaction: any) => {
+  return runFirestoreOperation(`transaction create radiobossCommands/${commandId}`, () => gatewayDb.runTransaction(async (transaction: any) => {
     const snapshot = await transaction.get(ref);
     if (snapshot.exists) return null;
 

@@ -1,5 +1,6 @@
 import {
-  db,
+  gatewayDb,
+  requestDb,
   Timestamp,
   setDocument,
   addDocument,
@@ -58,7 +59,7 @@ async function writeAuditLog(action: string, request: SongRequest, result: "succ
 async function getPendingSongRequests(): Promise<SongRequest[]> {
   const snapshot = await runFirestoreOperation(
     "query songRequests pending",
-    () => db
+      () => requestDb
       .collection("songRequests")
       .where("status", "in", ["new", "notified", "pending_review", "matched"])
       .limit(20)
@@ -96,9 +97,9 @@ async function createAddTrackCommand(request: SongRequest): Promise<string> {
     updatedAt: Timestamp.now(),
   };
 
-  const ref = db.collection("radiobossCommands").doc(commandId);
+  const ref = gatewayDb.collection("radiobossCommands").doc(commandId);
 
-  if (typeof db.runTransaction !== "function") {
+  if (typeof gatewayDb.runTransaction !== "function") {
     const snapshot = await runFirestoreOperation(
       `get radiobossCommands/${commandId}`,
       () => ref.get(),
@@ -111,7 +112,7 @@ async function createAddTrackCommand(request: SongRequest): Promise<string> {
     return commandId;
   }
 
-  return runFirestoreOperation(`transaction create radiobossCommands/${commandId}`, () => db.runTransaction(async (transaction: any) => {
+  return runFirestoreOperation(`transaction create radiobossCommands/${commandId}`, () => gatewayDb.runTransaction(async (transaction: any) => {
     const snapshot = await transaction.get(ref);
     if (snapshot.exists) return commandId;
 

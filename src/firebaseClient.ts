@@ -2,6 +2,14 @@ import * as admin from "firebase-admin";
 import * as path from "path";
 import * as fs from "fs";
 import dotenv from "dotenv";
+import { initializeApp as initializeClientApp, type FirebaseApp } from "firebase/app";
+import {
+  addDoc as addClientDoc,
+  collection as clientCollection,
+  doc as clientDoc,
+  getFirestore as getClientFirestore,
+  setDoc as setClientDoc,
+} from "firebase/firestore";
 import { Logger } from "./logger";
 
 dotenv.config();
@@ -12,7 +20,149 @@ let serviceAccountPath =
 const recordingProjectId = process.env.RECORDING_FIREBASE_PROJECT_ID || "";
 let recordingServiceAccountPath =
   process.env.RECORDING_GOOGLE_APPLICATION_CREDENTIALS || "";
+const defaultGatewayServiceAccountPath = "./service-account-gateway.json";
+const defaultRecordingServiceAccountPath = "./service-account-recording.json";
+const requestProjectId =
+  process.env.FIREBASE_GATEWAY_PROJECT_ID ||
+  process.env.FIREBASE_REQUEST_PROJECT_ID ||
+  process.env.FIREBASE_OVERLAY_PROJECT_ID ||
+  "radio-sbl-overlay";
+let requestServiceAccountPath =
+  process.env.FIREBASE_GATEWAY_GOOGLE_APPLICATION_CREDENTIALS ||
+  process.env.FIREBASE_REQUEST_GOOGLE_APPLICATION_CREDENTIALS || "";
 const isMockFirebase = process.env.MOCK_FIREBASE === "true";
+
+type FirestoreWriteTarget = "main" | "overlay" | "overlay2";
+
+const overlayConfig = {
+  apiKey: process.env.FIREBASE_OVERLAY_API_KEY || "AIzaSyAlLrzVLZyVRjdi3HGbwsEyvgUAOY4qRfY",
+  authDomain: process.env.FIREBASE_OVERLAY_AUTH_DOMAIN || "radio-sbl-overlay.firebaseapp.com",
+  projectId: process.env.FIREBASE_OVERLAY_PROJECT_ID || "radio-sbl-overlay",
+  storageBucket: process.env.FIREBASE_OVERLAY_STORAGE_BUCKET || "radio-sbl-overlay.firebasestorage.app",
+  messagingSenderId: process.env.FIREBASE_OVERLAY_MESSAGING_SENDER_ID || "1012850098092",
+  appId: process.env.FIREBASE_OVERLAY_APP_ID || "1:1012850098092:web:1ee49e340bec2720228409",
+};
+
+const overlay2Config = {
+  apiKey: process.env.FIREBASE_OVERLAY2_API_KEY || "AIzaSyCY7-rKolzbkV-fCdFvTyDSLbOuhnUvD38",
+  authDomain: process.env.FIREBASE_OVERLAY2_AUTH_DOMAIN || "overlaysbl.firebaseapp.com",
+  projectId: process.env.FIREBASE_OVERLAY2_PROJECT_ID || "overlaysbl",
+  storageBucket: process.env.FIREBASE_OVERLAY2_STORAGE_BUCKET || "overlaysbl.firebasestorage.app",
+  messagingSenderId: process.env.FIREBASE_OVERLAY2_MESSAGING_SENDER_ID || "319351353032",
+  appId: process.env.FIREBASE_OVERLAY2_APP_ID || "1:319351353032:web:1fc549da031f369506fffd",
+};
+
+let overlayClientApp: FirebaseApp | null = null;
+let overlay2ClientApp: FirebaseApp | null = null;
+let overlayAdminDbInstance: any = null;
+let overlay2AdminDbInstance: any = null;
+const missingAdminFallbackLogged = new Set<FirestoreWriteTarget>();
+
+function areRecordingFeaturesEnabled(): boolean {
+  return (
+    process.env.AUTO_RECORDING_ENABLED === "true" ||
+    process.env.COMMAND_WORKER_ENABLED === "true"
+  );
+}
+
+function isMultiProjectEnabled(): boolean {
+  return process.env.FIREBASE_MULTI_PROJECT_ENABLED === "true";
+}
+
+function allowClientSdkWrites(): boolean {
+  return process.env.FIREBASE_ALLOW_CLIENT_SDK_WRITES === "true";
+}
+
+function logMissingAdminFallback(target: Exclude<FirestoreWriteTarget, "main">) {
+  if (missingAdminFallbackLogged.has(target)) return;
+  missingAdminFallbackLogged.add(target);
+  Logger.warn(
+    `[Firestore Router] Admin SDK untuk target ${target} belum tersedia. Write sementara diarahkan ke Firebase utama.`,
+  );
+}
+
+function getClientApp(target: Exclude<FirestoreWriteTarget, "main">): FirebaseApp {
+  if (target === "overlay") {
+    if (!overlayClientApp) {
+      overlayClientApp = initializeClientApp(overlayConfig, "studio-gateway-overlay");
+      Logger.info(`[Firebase Overlay] Client SDK siap untuk project "${overlayConfig.projectId}".`);
+    }
+    return overlayClientApp;
+  }
+
+  if (!overlay2ClientApp) {
+    overlay2ClientApp = initializeClientApp(overlay2Config, "studio-gateway-overlay2");
+    Logger.info(`[Firebase Overlay2] Client SDK siap untuk project "${overlay2Config.projectId}".`);
+  }
+  return overlay2ClientApp;
+}
+
+function getAdminDbForTarget(target: Exclude<FirestoreWriteTarget, "main">): any | null {
+  return target === "overlay" ? overlayAdminDbInstance : overlay2AdminDbInstance;
+}
+
+function normalizeWriteTarget(value: string | undefined, fallback: FirestoreWriteTarget): FirestoreWriteTarget {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "main" || normalized === "overlay" || normalized === "overlay2") {
+    return normalized;
+  }
+  return fallback;
+}
+
+function getCollectionWriteTarget(collection: string): FirestoreWriteTarget {
+  if (!isMultiProjectEnabled()) return "main";
+
+  const gatewayCollections = new Set([
+    "radiobossStatus",
+    "radiobossNowPlaying",
+    "radiobossGatewayHeartbeat",
+    "radiobossTrackHistory",
+    "radiobossAuditLogs",
+    "radiobossCommands",
+    "songRequests",
+    "musicLibraryIndex",
+  ]);
+
+  if (gatewayCollections.has(collection)) {
+    return normalizeWriteTarget(
+      process.env.FIRESTORE_ROUTE_GATEWAY || process.env.FIRESTORE_ROUTE_SONG_REQUESTS,
+      "overlay",
+    );
+  }
+
+  if (collection === "programRecordings" || collection === "programRecordingRules") {
+    return normalizeWriteTarget(process.env.FIRESTORE_ROUTE_RECORDING, "overlay2");
+  }
+
+  return "main";
+}
+
+function toClientFirestoreValue(value: any): any {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  if (typeof value !== "object") return value;
+  if (typeof value.toDate === "function") return value.toDate();
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return value.map((item) => toClientFirestoreValue(item));
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, toClientFirestoreValue(item)]),
+  );
+}
+
+function sanitizeAdminFirestoreValue(value: any): any {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  if (typeof value !== "object") return value;
+  if (value instanceof Date) return value;
+  if (typeof value.toDate === "function") return value;
+  if (value._methodName || String(value.constructor?.name || "").includes("FieldValue")) return value;
+  if (Array.isArray(value)) return value.map((item) => sanitizeAdminFirestoreValue(item));
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, sanitizeAdminFirestoreValue(item)]),
+  );
+}
 
 // Mock Implementation untuk Pengujian Offline
 class MockDocumentReference {
@@ -91,6 +241,7 @@ const mockDb = {
 };
 
 let dbInstance: any;
+let requestDbInstance: any;
 let recordingDbInstance: any;
 let timestampInstance: any;
 let fieldValueInstance: any;
@@ -289,6 +440,7 @@ if (isMockFirebase) {
   Logger.info("==================================================");
 
   dbInstance = mockDb;
+  requestDbInstance = mockDb;
   recordingDbInstance = mockDb;
   timestampInstance = {
     now: () => new Date(),
@@ -309,13 +461,52 @@ if (isMockFirebase) {
   );
 
   dbInstance = admin.firestore();
+  requestDbInstance = dbInstance;
   recordingDbInstance = dbInstance;
+  requestServiceAccountPath =
+    requestServiceAccountPath || existingOptionalCredentialPath(defaultGatewayServiceAccountPath);
+  recordingServiceAccountPath =
+    recordingServiceAccountPath || existingOptionalCredentialPath(defaultRecordingServiceAccountPath);
+
+  if (requestProjectId && requestServiceAccountPath) {
+    const requestCredential = loadServiceAccount(requestServiceAccountPath, "gateway RadioBOSS");
+    const requestApp = admin.initializeApp(
+      {
+        credential: admin.credential.cert(requestCredential.serviceAccount),
+        projectId: requestProjectId,
+      },
+      "gateway",
+    );
+    requestDbInstance = requestApp.firestore();
+    overlayAdminDbInstance = requestDbInstance;
+    Logger.info(
+      `[Firebase Gateway] Admin SDK siap untuk project "${requestProjectId}" menggunakan kredensial di: ${requestCredential.resolvedPath}`,
+    );
+  } else if (isMultiProjectEnabled()) {
+    Logger.warn(
+      `[Firebase Gateway] FIREBASE_GATEWAY_GOOGLE_APPLICATION_CREDENTIALS/FIREBASE_REQUEST_GOOGLE_APPLICATION_CREDENTIALS kosong. Koleksi RadioBOSS tetap memakai Firebase utama sampai kredensial project "${requestProjectId}" siap.`,
+    );
+  }
 
   if (recordingProjectId) {
     if (!recordingServiceAccountPath) {
+      if (areRecordingFeaturesEnabled()) {
+        Logger.error(
+          "[Firebase Recording] RECORDING_FIREBASE_PROJECT_ID terisi, tetapi RECORDING_GOOGLE_APPLICATION_CREDENTIALS kosong. Fitur recording/command aktif, startup dihentikan agar recording tidak salah project.",
+        );
+        process.exit(1);
+      }
       Logger.warn(
         "[Firebase Recording] RECORDING_FIREBASE_PROJECT_ID terisi, tetapi RECORDING_GOOGLE_APPLICATION_CREDENTIALS kosong. Recording tetap memakai Firebase utama.",
       );
+    } else if (!fs.existsSync(resolveCredentialPath(recordingServiceAccountPath))) {
+      const message =
+        `[Firebase Recording] RECORDING_FIREBASE_PROJECT_ID terisi, tetapi file kredensial recording tidak ditemukan di: ${resolveCredentialPath(recordingServiceAccountPath)}.`;
+      if (areRecordingFeaturesEnabled()) {
+        Logger.error(`${message} Fitur recording/command aktif, startup dihentikan agar tidak salah menulis data.`);
+        process.exit(1);
+      }
+      Logger.warn(`${message} Fitur recording/command nonaktif, recording tetap memakai Firebase utama.`);
     } else {
       Logger.info(`[Firebase Recording] Menginisialisasi proyek ID: "${recordingProjectId}"`);
       const recordingCredential = loadServiceAccount(recordingServiceAccountPath, "recording");
@@ -327,10 +518,53 @@ if (isMockFirebase) {
         "recording",
       );
       recordingDbInstance = recordingApp.firestore();
+      if (recordingProjectId === overlay2Config.projectId) {
+        overlay2AdminDbInstance = recordingDbInstance;
+      }
       Logger.info(
         `[Firebase Recording] Inisialisasi berhasil menggunakan berkas kredensial di: ${recordingCredential.resolvedPath}`,
       );
     }
+  }
+
+  const overlayCredentialPath = process.env.FIREBASE_OVERLAY_GOOGLE_APPLICATION_CREDENTIALS || "";
+  if (overlayCredentialPath && !overlayAdminDbInstance) {
+    const overlayCredential = loadServiceAccount(overlayCredentialPath, "overlay");
+    const overlayAdminApp = admin.initializeApp(
+      {
+        credential: admin.credential.cert(overlayCredential.serviceAccount),
+        projectId: overlayConfig.projectId,
+      },
+      "overlay",
+    );
+    overlayAdminDbInstance = overlayAdminApp.firestore();
+    Logger.info(
+      `[Firebase Overlay] Admin SDK siap untuk project "${overlayConfig.projectId}" menggunakan kredensial di: ${overlayCredential.resolvedPath}`,
+    );
+  } else if (isMultiProjectEnabled() && !overlayAdminDbInstance) {
+    Logger.warn(
+      `[Firebase Overlay] FIREBASE_OVERLAY_GOOGLE_APPLICATION_CREDENTIALS kosong. Write ke "${overlayConfig.projectId}" ${allowClientSdkWrites() ? "akan memakai Web SDK dan tunduk pada Firestore Rules" : "sementara fallback ke Firebase utama"}.`,
+    );
+  }
+
+  const overlay2CredentialPath = process.env.FIREBASE_OVERLAY2_GOOGLE_APPLICATION_CREDENTIALS || "";
+  if (overlay2CredentialPath) {
+    const overlay2Credential = loadServiceAccount(overlay2CredentialPath, "overlay2");
+    const overlay2AdminApp = admin.initializeApp(
+      {
+        credential: admin.credential.cert(overlay2Credential.serviceAccount),
+        projectId: overlay2Config.projectId,
+      },
+      "overlay2",
+    );
+    overlay2AdminDbInstance = overlay2AdminApp.firestore();
+    Logger.info(
+      `[Firebase Overlay2] Admin SDK siap untuk project "${overlay2Config.projectId}" menggunakan kredensial di: ${overlay2Credential.resolvedPath}`,
+    );
+  } else if (isMultiProjectEnabled()) {
+    Logger.warn(
+      `[Firebase Overlay2] FIREBASE_OVERLAY2_GOOGLE_APPLICATION_CREDENTIALS kosong. Write ke "${overlay2Config.projectId}" ${allowClientSdkWrites() ? "akan memakai Web SDK dan tunduk pada Firestore Rules" : "sementara fallback ke Firebase utama"}.`,
+    );
   }
 
   timestampInstance = admin.firestore.Timestamp;
@@ -338,6 +572,8 @@ if (isMockFirebase) {
 }
 
 export const db = dbInstance;
+export const gatewayDb = requestDbInstance;
+export const requestDb = requestDbInstance;
 export const recordingDb = recordingDbInstance;
 export const Timestamp = timestampInstance;
 export const FieldValue = fieldValueInstance;
@@ -356,13 +592,49 @@ async function setDocumentOnDb(
   try {
     await runFirestoreOperation(
       operation,
-      () => targetDb.collection(collection).doc(docId).set(data, { merge }),
+      () => targetDb.collection(collection).doc(docId).set(sanitizeAdminFirestoreValue(data), { merge }),
       options,
     );
     return true;
   } catch (err: any) {
     Logger.error(
       `[Firestore] Gagal menulis dokumen "${collection}/${docId}": ${err.message || String(err)}`,
+    );
+    throw err;
+  }
+}
+
+function existingOptionalCredentialPath(filePath: string): string {
+  return filePath && fs.existsSync(resolveCredentialPath(filePath)) ? filePath : "";
+}
+
+async function setDocumentOnClientProject(
+  target: Exclude<FirestoreWriteTarget, "main">,
+  collection: string,
+  docId: string,
+  data: object,
+  merge = true,
+  options?: { retryOnTransient?: boolean },
+): Promise<boolean> {
+  const operation = `set ${target}:${collection}/${docId}`;
+  if (shouldSkipFirestoreOperation(operation)) return false;
+
+  try {
+    const clientDb = getClientFirestore(getClientApp(target));
+    await runFirestoreOperation(
+      operation,
+      () =>
+        setClientDoc(
+          clientDoc(clientDb, collection, docId),
+          toClientFirestoreValue(data),
+          { merge },
+        ),
+      options,
+    );
+    return true;
+  } catch (err: any) {
+    Logger.error(
+      `[Firestore ${target}] Gagal menulis dokumen "${collection}/${docId}": ${err.message || String(err)}`,
     );
     throw err;
   }
@@ -376,7 +648,29 @@ export async function setDocument(
   merge = true,
   options?: { retryOnTransient?: boolean },
 ): Promise<boolean> {
-  return setDocumentOnDb(db, collection, docId, data, merge, options);
+  const target = getCollectionWriteTarget(collection);
+  if (target === "main" || isMockFirebase) {
+    return setDocumentOnDb(db, collection, docId, data, merge, options);
+  }
+
+  const adminTargetDb = getAdminDbForTarget(target);
+  if (adminTargetDb) {
+    return setDocumentOnDb(adminTargetDb, collection, docId, data, merge, options);
+  }
+
+  if (!allowClientSdkWrites()) {
+    logMissingAdminFallback(target);
+    return setDocumentOnDb(db, collection, docId, data, merge, options);
+  }
+
+  try {
+    return await setDocumentOnClientProject(target, collection, docId, data, merge, options);
+  } catch (err) {
+    Logger.warn(
+      `[Firestore Router] Fallback ke Firebase utama untuk ${collection}/${docId} karena write ke ${target} gagal: ${String(err)}`,
+    );
+    return setDocumentOnDb(db, collection, docId, data, merge, options);
+  }
 }
 
 export async function setRecordingDocument(
@@ -391,7 +685,21 @@ export async function setRecordingDocument(
 
 // Helper Write Terpadu: menambahkan dokumen acak secara konsisten
 export async function addDocument(collection: string, data: object) {
-  const operation = `add ${collection}`;
+  const target = getCollectionWriteTarget(collection);
+  const adminTargetDb = target === "main" || isMockFirebase ? null : getAdminDbForTarget(target);
+  const shouldFallbackToMain =
+    target !== "main" &&
+    !isMockFirebase &&
+    !adminTargetDb &&
+    !allowClientSdkWrites();
+  if (shouldFallbackToMain) {
+    logMissingAdminFallback(target);
+  }
+
+  const operation =
+    target === "main" || isMockFirebase || shouldFallbackToMain
+      ? `add ${collection}`
+      : `add ${target}:${collection}`;
   if (shouldSkipFirestoreOperation(operation)) {
     return `skipped-quota-cooldown-${Date.now()}`;
   }
@@ -399,11 +707,32 @@ export async function addDocument(collection: string, data: object) {
   try {
     const ref = await runFirestoreOperation<any>(
       operation,
-      () => db.collection(collection).add(data),
+      () => {
+        if (target === "main" || isMockFirebase || shouldFallbackToMain) {
+          return db.collection(collection).add(sanitizeAdminFirestoreValue(data));
+        }
+        if (adminTargetDb) {
+          return adminTargetDb.collection(collection).add(sanitizeAdminFirestoreValue(data));
+        }
+        const clientDb = getClientFirestore(getClientApp(target));
+        return addClientDoc(clientCollection(clientDb, collection), toClientFirestoreValue(data));
+      },
       { retryOnTransient: false },
     );
     return ref.id;
   } catch (err: any) {
+    if (target !== "main" && !isMockFirebase) {
+      Logger.warn(
+        `[Firestore Router] Fallback add ke Firebase utama untuk ${collection} karena write ke ${target} gagal: ${err.message || String(err)}`,
+      );
+      const fallbackRef = await runFirestoreOperation<any>(
+        `add ${collection}`,
+        () => db.collection(collection).add(sanitizeAdminFirestoreValue(data)),
+        { retryOnTransient: false },
+      );
+      return fallbackRef.id;
+    }
+
     Logger.error(
       `[Firestore] Gagal menambahkan dokumen ke koleksi "${collection}": ${err.message || String(err)}`,
     );

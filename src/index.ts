@@ -2,6 +2,7 @@ import * as os from "os";
 import dotenv from "dotenv";
 import {
   db,
+  gatewayDb,
   Timestamp,
   setDocument,
   addDocument,
@@ -197,7 +198,7 @@ export async function initializeLastTrack() {
   try {
     const doc = await runFirestoreOperation(
       "get radiobossNowPlaying/current",
-      () => db.collection("radiobossNowPlaying").doc("current").get(),
+      () => gatewayDb.collection("radiobossNowPlaying").doc("current").get(),
     );
     if (doc.exists) {
       const data = doc.data();
@@ -302,7 +303,7 @@ export async function syncRadioBoss() {
       progressPercent: normalized.current.progressPercent,
       nextArtist: normalized.next.artist,
       nextTitle: normalized.next.title,
-      nextCastTitle: normalized.next.castTitle,
+      nextCastTitle: normalized.next.castTitle || "",
       updatedAt: Timestamp.now(),
       source: "radioboss_remote_api",
       gatewayId,
@@ -490,7 +491,10 @@ async function updateGatewayHeartbeat(options: {
       status: options.status,
       mode: commandWorkerEnabled ? "read_write_command_queue" : "read_only",
       appVersion,
+      version: appVersion,
+      heartbeatIntervalSeconds: Math.ceil(heartbeatIntervalMs / 1000),
       lastSeenAt: options.lastSeenAt,
+      updatedAt: Timestamp.now(),
     };
     Logger.info(`[Heartbeat] Mengirim update heartbeat (status=${options.status}) ke Firestore...`);
     const written = await setDocument(

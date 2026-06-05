@@ -11,17 +11,26 @@
     "test-parser": "ts-node src/testParser.ts",
     "inspect:request": "ts-node src/tools/inspectSongRequests.ts",
     "inspect:requests": "ts-node src/tools/inspectSongRequests.ts",
-    "format": "prettier --write \"src/**/*.ts\" \"sbl-app-templates/**/*.{ts,tsx}\""
-    ,"install-autostart":"powershell -ExecutionPolicy Bypass -File install-autostart.ps1"
-    ,"uninstall-autostart":"powershell -ExecutionPolicy Bypass -File uninstall-autostart.ps1"
-    ,"verify-deploy":"powershell -ExecutionPolicy Bypass -File verify-deploy.ps1"
+    "format": "prettier --write \"src/**/*.ts\" \"sbl-app-templates/**/*.{ts,tsx}\"",
+    "install-autostart": "powershell -ExecutionPolicy Bypass -File install-autostart.ps1",
+    "install:firebase-credentials": "powershell -ExecutionPolicy Bypass -File install-firebase-credentials.ps1",
+    "create:firebase-credentials": "powershell -ExecutionPolicy Bypass -File create-firebase-service-accounts.ps1",
+    "gateway:stop": "powershell -ExecutionPolicy Bypass -File stop-gateway.ps1",
+    "gateway:enable": "powershell -ExecutionPolicy Bypass -File enable-gateway.ps1",
+    "uninstall-autostart": "powershell -ExecutionPolicy Bypass -File uninstall-autostart.ps1",
+    "verify-deploy": "powershell -ExecutionPolicy Bypass -File verify-deploy.ps1",
+    "verify:go-live": "powershell -ExecutionPolicy Bypass -File verify-go-live.ps1",
+    "deploy:rules": "powershell -ExecutionPolicy Bypass -File deploy-firestore-rules.ps1",
+    "deploy:rules:overlay": "npx firebase-tools deploy --only firestore:rules --project radio-sbl-overlay --config firebase.overlay.json",
+    "deploy:rules:overlay2": "npx firebase-tools deploy --only firestore:rules --project overlaysbl --config firebase.overlay2.json"
   },
   "dependencies": {
     "@google-cloud/firestore": "^8.6.0",
     "@whiskeysockets/baileys": "^7.0.0-rc13",
     "dotenv": "^16.4.5",
-    "fast-xml-parser": "^4.4.0",
-    "firebase-admin": "^12.1.0",
+    "fast-xml-parser": "^5.8.0",
+    "firebase": "^12.14.0",
+    "firebase-admin": "^13.10.0",
     "qrcode": "^1.5.1",
     "qrcode-terminal": "^0.12.0"
   },
@@ -30,5 +39,8 @@
     "prettier": "^3.8.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   }
 }

@@ -1,4 +1,4 @@
-import { db, Timestamp, runFirestoreOperation } from "../firebaseClient";
+import { gatewayDb, Timestamp, runFirestoreOperation } from "../firebaseClient";
 import type { RadiobossCommand } from "../types";
 
 const LOCK_TIMEOUT_MS = 2 * 60 * 1000;
@@ -11,9 +11,9 @@ function toMillis(value: any): number {
 }
 
 export async function tryLockCommand(commandId: string, gatewayId: string): Promise<boolean> {
-  const ref = db.collection("radiobossCommands").doc(commandId);
+  const ref = gatewayDb.collection("radiobossCommands").doc(commandId);
 
-  if (typeof db.runTransaction !== "function") {
+  if (typeof gatewayDb.runTransaction !== "function") {
     const snapshot = await runFirestoreOperation(`get radiobossCommands/${commandId}`, () => ref.get());
     const data = snapshot.data() as RadiobossCommand | undefined;
     if (!snapshot.exists || !data || !["pending", "retryable"].includes(data.status)) return false;
@@ -26,7 +26,7 @@ export async function tryLockCommand(commandId: string, gatewayId: string): Prom
     return true;
   }
 
-  return runFirestoreOperation("transaction lock radiobossCommand", () => db.runTransaction(async (transaction: any) => {
+  return runFirestoreOperation("transaction lock radiobossCommand", () => gatewayDb.runTransaction(async (transaction: any) => {
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists) return false;
 

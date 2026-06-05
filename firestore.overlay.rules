@@ -1,0 +1,174 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function hasOnly(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasAll(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function validStatus(value, statuses) {
+      return value in statuses;
+    }
+
+    function validSongRequestPayload() {
+      return hasOnly([
+        'requesterName',
+        'requesterWhatsapp',
+        'requesterPhoneMasked',
+        'artist',
+        'title',
+        'source',
+        'channel',
+        'reviewStatus',
+        'rawMessage',
+        'requestedTitle',
+        'requestedArtist',
+        'dedication',
+        'whatsappMessageId',
+        'message',
+        'announcerName',
+        'announcerWhatsapp',
+        'status',
+        'matchStatus',
+        'matchedTrackId',
+        'matchedFilePath',
+        'confidence',
+        'approvedBy',
+        'approvedAt',
+        'sentToRadioBossAt',
+        'radioBossCommandId',
+        'queuedAt',
+        'playedAt',
+        'rejectedBy',
+        'rejectedAt',
+        'rejectReason',
+        'expiresAt',
+        'createdAt',
+        'updatedAt',
+        'gatewayId',
+        'notificationText',
+        'whatsappUrl'
+      ])
+      && hasAll(['requesterName', 'title', 'status', 'notificationText', 'createdAt'])
+      && validStatus(request.resource.data.status, [
+        'new',
+        'notified',
+        'pending_review',
+        'matched',
+        'needs_review',
+        'sent_to_radioboss',
+        'queued',
+        'played',
+        'rejected',
+        'expired'
+      ])
+      && (!('matchStatus' in request.resource.data)
+        || request.resource.data.matchStatus in ['unmatched', 'matched', 'ambiguous', 'not_found']);
+    }
+
+    function validRadiobossCommandPayload() {
+      return hasOnly([
+        'type',
+        'status',
+        'payload',
+        'requestedBy',
+        'requestedByName',
+        'requestedAt',
+        'priority',
+        'dedupeKey',
+        'attempts',
+        'maxAttempts',
+        'lockedBy',
+        'lockedAt',
+        'executedAt',
+        'gatewayId',
+        'result',
+        'errorCode',
+        'errorMessageSafe',
+        'createdAt',
+        'updatedAt'
+      ])
+      && hasAll([
+        'type',
+        'status',
+        'payload',
+        'requestedBy',
+        'requestedByName',
+        'requestedAt',
+        'priority',
+        'dedupeKey',
+        'attempts',
+        'maxAttempts',
+        'createdAt',
+        'updatedAt'
+      ])
+      && request.resource.data.status == 'pending'
+      && request.resource.data.type in [
+        'START_RECORDING',
+        'STOP_RECORDING',
+        'MARK_RECORDING_SKIPPED',
+        'RETRY_COMMAND',
+        'ADD_TRACK_TO_QUEUE',
+        'MARK_REQUEST_PLAYED'
+      ]
+      && request.resource.data.payload is map
+      && !('rawCommand' in request.resource.data)
+      && !('rawCommand' in request.resource.data.payload)
+      && request.resource.data.attempts == 0
+      && request.resource.data.maxAttempts <= 3
+      && request.resource.data.priority in ['low', 'normal', 'high'];
+    }
+
+    match /radiobossStatus/{statusId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /radiobossNowPlaying/{nowPlayingId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /radiobossGatewayHeartbeat/{gatewayId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /radiobossTrackHistory/{trackId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /radiobossAuditLogs/{logId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /musicLibraryIndex/{trackId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /radiobossCommands/{commandId} {
+      allow read: if true;
+      allow create: if validRadiobossCommandPayload();
+      allow update, delete: if false;
+    }
+
+    match /songRequests/{requestId} {
+      allow read: if true;
+      allow create: if validSongRequestPayload()
+        && request.resource.data.status in ['new', 'notified'];
+      allow update: if validSongRequestPayload();
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
