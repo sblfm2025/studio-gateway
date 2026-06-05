@@ -22,13 +22,13 @@ import {
 } from "../recording/recordingStatus.service";
 import { sendAllowedRadioBossCommand, sendRadioBossAction } from "../radioboss/radiobossCommandClient";
 
-const COMMAND_BATCH_LIMIT = 10;
+const COMMAND_BATCH_LIMIT = 5;
 const gatewayId = process.env.GATEWAY_ID || "studio-main";
 
 function getCommandPollIntervalMs(): number {
-  const raw = Number(process.env.COMMAND_POLL_INTERVAL_SECONDS || 30);
-  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 30000;
-  return Math.min(120, Math.max(10, raw)) * 1000;
+  const raw = Number(process.env.COMMAND_POLL_INTERVAL_SECONDS || 120);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 120000;
+  return Math.min(300, Math.max(60, raw)) * 1000;
 }
 
 function getRecordingRoot(): string {

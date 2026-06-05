@@ -9,9 +9,9 @@ import { upsertProgramRecordingIfChanged } from "./recordingStatus.service";
 const gatewayId = process.env.GATEWAY_ID || "studio-main";
 
 function getAutoRecordingIntervalMs(): number {
-  const raw = Number(process.env.AUTO_RECORDING_INTERVAL_SECONDS || 120);
-  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 120000;
-  return Math.min(600, Math.max(60, raw)) * 1000;
+  const raw = Number(process.env.AUTO_RECORDING_INTERVAL_SECONDS || 300);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 300000;
+  return Math.min(900, Math.max(120, raw)) * 1000;
 }
 
 function safeId(value: string): string {

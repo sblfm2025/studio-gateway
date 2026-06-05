@@ -30,9 +30,9 @@ export const gatewayId = process.env.GATEWAY_ID || "studio-main";
 const gatewayName = process.env.GATEWAY_NAME || "Studio Utama Radio SBL";
 export const pcName = process.env.PC_NAME || os.hostname() || "STUDIO-SBL";
 export const appVersion = "1.0.0";
-const commandWorkerEnabled = process.env.COMMAND_WORKER_ENABLED !== "false";
+const commandWorkerEnabled = process.env.COMMAND_WORKER_ENABLED === "true";
 const autoRecordingEnabled = process.env.AUTO_RECORDING_ENABLED === "true";
-const songRequestWorkerEnabled = process.env.SONG_REQUEST_WORKER_ENABLED !== "false";
+const songRequestWorkerEnabled = process.env.SONG_REQUEST_WORKER_ENABLED === "true";
 const whatsappRequestWorkerEnabled = process.env.WHATSAPP_REQUEST_WORKER_ENABLED === "true";
 
 function getBoundedEnvSeconds(
@@ -48,14 +48,14 @@ function getBoundedEnvSeconds(
 
 // 1. Validasi Batas Polling Aman (Minimal 5 detik, Maksimal 60 detik)
 function getPollIntervalMs(): number {
-  const raw = parseInt(process.env.POLL_INTERVAL_SECONDS || "10", 10);
+  const raw = parseInt(process.env.POLL_INTERVAL_SECONDS || "60", 10);
   if (isNaN(raw)) {
     Logger.warn(
-      "[Config] POLL_INTERVAL_SECONDS tidak valid. Menggunakan default 10 detik.",
+      "[Config] POLL_INTERVAL_SECONDS tidak valid. Menggunakan default 60 detik.",
     );
-    return 10000;
+    return 60000;
   }
-  const safeSeconds = Math.min(60, Math.max(5, raw));
+  const safeSeconds = Math.min(300, Math.max(30, raw));
   if (safeSeconds !== raw) {
     Logger.warn(
       `[Config] POLL_INTERVAL_SECONDS disesuaikan dari ${raw} ke batas aman ${safeSeconds} detik.`,
@@ -66,11 +66,11 @@ function getPollIntervalMs(): number {
 
 const pollIntervalMs = getPollIntervalMs();
 const nowPlayingMinWriteMs =
-  getBoundedEnvSeconds("NOW_PLAYING_MIN_WRITE_SECONDS", 10, 5, 60) * 1000;
+  getBoundedEnvSeconds("NOW_PLAYING_MIN_WRITE_SECONDS", 60, 30, 300) * 1000;
 const statusMinWriteMs =
-  getBoundedEnvSeconds("STATUS_MIN_WRITE_SECONDS", 60, 10, 300) * 1000;
+  getBoundedEnvSeconds("STATUS_MIN_WRITE_SECONDS", 120, 60, 600) * 1000;
 const heartbeatIntervalMs =
-  getBoundedEnvSeconds("HEARTBEAT_INTERVAL_SECONDS", 60, 30, 300) * 1000;
+  getBoundedEnvSeconds("HEARTBEAT_INTERVAL_SECONDS", 120, 60, 600) * 1000;
 const errorAuditMinWriteMs =
   getBoundedEnvSeconds("ERROR_AUDIT_MIN_SECONDS", 300, 60, 3600) * 1000;
 

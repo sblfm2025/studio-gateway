@@ -12,7 +12,7 @@ import type { FirestoreAuditLog, RadiobossCommand, SongRequest } from "../types"
 const gatewayId = process.env.GATEWAY_ID || "studio-main";
 
 function shouldAutoForward(): boolean {
-  return process.env.SONG_REQUEST_AUTO_FORWARD_TO_RADIOBOSS !== "false";
+  return process.env.SONG_REQUEST_AUTO_FORWARD_TO_RADIOBOSS === "true";
 }
 
 function getDummyRequestFilePath(): string {
@@ -33,9 +33,9 @@ function buildRequestMessage(request: SongRequest): string {
 }
 
 function getIntervalMs(): number {
-  const raw = Number(process.env.SONG_REQUEST_WORKER_INTERVAL_SECONDS || 120);
-  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 120000;
-  return Math.min(300, Math.max(60, raw)) * 1000;
+  const raw = Number(process.env.SONG_REQUEST_WORKER_INTERVAL_SECONDS || 300);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 300000;
+  return Math.min(900, Math.max(120, raw)) * 1000;
 }
 
 async function writeAuditLog(action: string, request: SongRequest, result: "success" | "failed" | "skipped", details: Record<string, any>) {
