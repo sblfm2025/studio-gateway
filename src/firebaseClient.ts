@@ -348,12 +348,17 @@ async function setDocumentOnDb(
   docId: string,
   data: object,
   merge = true,
+  options?: { retryOnTransient?: boolean },
 ): Promise<boolean> {
   const operation = `set ${collection}/${docId}`;
   if (shouldSkipFirestoreOperation(operation)) return false;
 
   try {
-    await runFirestoreOperation(operation, () => targetDb.collection(collection).doc(docId).set(data, { merge }));
+    await runFirestoreOperation(
+      operation,
+      () => targetDb.collection(collection).doc(docId).set(data, { merge }),
+      options,
+    );
     return true;
   } catch (err: any) {
     Logger.error(
@@ -369,8 +374,9 @@ export async function setDocument(
   docId: string,
   data: object,
   merge = true,
+  options?: { retryOnTransient?: boolean },
 ): Promise<boolean> {
-  return setDocumentOnDb(db, collection, docId, data, merge);
+  return setDocumentOnDb(db, collection, docId, data, merge, options);
 }
 
 export async function setRecordingDocument(
@@ -378,8 +384,9 @@ export async function setRecordingDocument(
   docId: string,
   data: object,
   merge = true,
+  options?: { retryOnTransient?: boolean },
 ): Promise<boolean> {
-  return setDocumentOnDb(recordingDb, collection, docId, data, merge);
+  return setDocumentOnDb(recordingDb, collection, docId, data, merge, options);
 }
 
 // Helper Write Terpadu: menambahkan dokumen acak secara konsisten

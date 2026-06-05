@@ -493,7 +493,13 @@ async function updateGatewayHeartbeat(options: {
       lastSeenAt: options.lastSeenAt,
     };
     Logger.info(`[Heartbeat] Mengirim update heartbeat (status=${options.status}) ke Firestore...`);
-    const written = await setDocument("radiobossGatewayHeartbeat", gatewayId, heartbeatData);
+    const written = await setDocument(
+      "radiobossGatewayHeartbeat",
+      gatewayId,
+      heartbeatData,
+      true,
+      { retryOnTransient: false },
+    );
     const elapsed = Date.now() - start;
     if (written) {
       lastHeartbeatWriteAt = Date.now();
