@@ -60,16 +60,65 @@ Dokumen ini memuat daftar kendala umum yang mungkin terjadi selama pengoperasian
    * Pastikan komputer studio memiliki koneksi internet yang stabil ke Google Cloud APIs. Lakukan ping ke `firestore.googleapis.com` lewat Command Prompt untuk memverifikasi jalur perutean jaringan Anda.
 4. **Periksa Aturan Aturan Keamanan (Security Rules)**:
    * Jika koneksi internet normal tapi penulisan ditolak, periksa Firestore Security Rules di Firebase Console Anda. Pastikan role akun layanan (*Service Account*) memiliki hak akses menulis (*write access*) penuh ke koleksi target.
-5. **Jika muncul `RESOURCE_EXHAUSTED: Quota exceeded`**:
-   * Artinya kuota Firestore proyek sedang habis atau terlalu banyak operasi dalam waktu singkat.
-   * Pastikan hanya satu proses `node.exe` gateway yang berjalan di PC Studio.
-   * Naikkan interval `.env`: `POLL_INTERVAL_SECONDS=30`, `COMMAND_POLL_INTERVAL_SECONDS=30`, `SONG_REQUEST_WORKER_INTERVAL_SECONDS=120`, dan `AUTO_RECORDING_INTERVAL_SECONDS=120`.
-   * Set `FIRESTORE_OP_TIMEOUT_MS=15000` dan `FIRESTORE_QUOTA_COOLDOWN_SECONDS=300` agar gateway tidak menggantung 10 menit saat Firestore menolak request.
-   * Jika kuota harian benar-benar habis, tunggu reset kuota atau aktifkan/naikkan billing/quota Firebase.
 
 ---
 
-## 🎵 4. Metadata Trek Kosong atau Duplikat
+## ⚠️ 4. Firestore Quota Exhausted (Kuota Firestore Habis)
+
+### Gejala
+* Log penuh dengan error `Error: 8 RESOURCE_EXHAUSTED: Quota exceeded.` atau `Total timeout of API google.firestore.v1.Firestore exceeded 600000 milliseconds...`
+* Semua operasi Firestore gagal berulang kali (reading, writing, audit logs).
+* Status `radiobossStatus/current` tidak ter-update di Firestore.
+* Heartbeat gateway berhenti ter-update di `radiobossGatewayHeartbeat/{gatewayId}`.
+
+### Penyebab Umum
+1. **Banyak proses gateway berjalan bersamaan**: Lebih dari satu instance `node.exe` gateway menjalankan sinkronisasi ke Firestore yang sama.
+2. **Polling interval terlalu pendek**: Operasi pembacaan/penulisan Firestore terjadi terlalu sering tanpa jeda.
+3. **Quota Firestore harian sudah habis**: Proyek Firebase Anda telah mencapai batas maksimum operasi per hari (Spark Plan memiliki batas 50K read/write/delete per hari).
+4. **Aplikasi Radio SBL atau worker lain**: Ada aplikasi backend lain (misalnya API server utama Radio SBL) yang juga terus menulis ke database yang sama.
+
+### Cara Pengecekan & Solusi Segera
+1. **Pastikan Hanya Satu Proses Gateway Berjalan**:
+   ```powershell
+   Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'dist\\index.js' }
+   taskkill /PID <PID> /F
+   ```
+2. **Hentikan Sementara Beban Kerja Non-Kritis**:
+   Ubah berkas `.env` dan nonaktifkan worker yang tidak mendesak:
+   ```env
+   COMMAND_WORKER_ENABLED=false
+   AUTO_RECORDING_ENABLED=false
+   SONG_REQUEST_WORKER_ENABLED=false
+   WHATSAPP_REQUEST_WORKER_ENABLED=false
+   ```
+3. **Tingkatkan Polling Interval**:
+   ```env
+   POLL_INTERVAL_SECONDS=60
+   COMMAND_POLL_INTERVAL_SECONDS=60
+   SONG_REQUEST_WORKER_INTERVAL_SECONDS=300
+   AUTO_RECORDING_INTERVAL_SECONDS=300
+   ```
+4. **Biarkan Gateway Cool Down Otomatis**:
+   - Agen gateway akan otomatis memasuki "cooldown mode" selama **15 menit** (900 detik) saat mendeteksi quota exceeded.
+   - Selama periode ini, operasi Firestore non-kritis akan otomatis dilewati.
+   - Jangan matikan proses gateway atau restart — biarkan cool down selesai.
+5. **Periksa Firestore Console di Google Cloud**:
+   - Masuk ke [Firebase Console](https://console.firebase.google.com/).
+   - Navigasi ke **Firestore Database** -> tab **Usage** atau **Quota**.
+   - Jika menggunakan **Spark Plan** (gratis), naikkan ke **Blaze Plan** (pay-as-you-go) untuk unlimited quota.
+6. **Jika Quota Benar-Benar Habis Untuk Hari Ini**:
+   - Matikan gateway: `taskkill /IM node.exe /F` di PC Studio.
+   - Tunggu hingga kuota reset pada tanggal berganti (GMT+0, biasanya pukul 07:00 WIB).
+
+### Mitigasi Jangka Panjang
+- **Kurangi Frequency Worker**: Set interval worker yang lebih lama (2-3 menit untuk command queue, 5 menit untuk song request).
+- **Indexing Firestore**: Pastikan collection sudah memiliki index optimal untuk query yang sering dijalankan.
+- **Archive Old Logs**: Arsipkan audit log lebih dari 30 hari ke collection terpisah atau BigQuery.
+- **Monitor Quota**: Set up notifikasi Firebase di Console agar Anda tahu saat quota mendekati batas.
+
+---
+
+## 🎵 5. Metadata Trek Kosong atau Duplikat
 
 ### Gejala
 * Tampilan lagu di aplikasi frontend menampilkan `"Radio SBL Live"` secara terus-menerus padahal RadioBOSS sedang aktif memutar musik.
@@ -85,7 +134,7 @@ Dokumen ini memuat daftar kendala umum yang mungkin terjadi selama pengoperasian
 
 ---
 
-## 🔁 5. Agen Gateway Tidak Menyala Otomatis
+## 🔁 6. Agen Gateway Tidak Menyala Otomatis
 
 ### Gejala
 * Saat komputer studio direstart, sinkronisasi lagu tidak berjalan dan log di `gateway.log` tidak bertambah.

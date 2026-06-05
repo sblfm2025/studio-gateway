@@ -387,15 +387,20 @@ async function updateGatewayHeartbeat(options: {
 }
 
 // Central Sync Loop dengan pengamanan Lock agar tidak Overlap
+let consecutiveSyncSkips = 0;
 async function safeSyncRadioBoss() {
   if (isSyncing) {
-    Logger.warn(
-      "[Agent] Polling berikutnya dilewati karena proses sinkronisasi sebelumnya masih berjalan.",
-    );
+    consecutiveSyncSkips += 1;
+    if (consecutiveSyncSkips <= 3 || consecutiveSyncSkips % 5 === 0) {
+      Logger.warn(
+        `[Agent] Polling berikutnya dilewati (skip #${consecutiveSyncSkips}): proses sinkronisasi sebelumnya masih berjalan.`,
+      );
+    }
     return;
   }
 
   isSyncing = true;
+  consecutiveSyncSkips = 0;
   try {
     await syncRadioBoss();
   } finally {
@@ -448,8 +453,9 @@ async function startAgent() {
   await safeSyncRadioBoss();
 
   // Jadwalkan sinkronisasi berkala yang terproteksi oleh sync lock
+  // Jika Firestore sedang cooldown quota, polling interval akan otomatis lebih jarang
   Logger.info(
-    `[Agent] Menjadwalkan sinkronisasi berkala setiap ${pollIntervalMs / 1000} detik.`,
+    `[Agent] Menjadwalkan sinkronisasi berkala setiap ${pollIntervalMs / 1000} detik (akan tertunda saat Firestore quota cooldown).`,
   );
   setInterval(safeSyncRadioBoss, pollIntervalMs);
 

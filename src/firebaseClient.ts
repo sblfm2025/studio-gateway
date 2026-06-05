@@ -100,21 +100,27 @@ function getFirestoreOpTimeoutMs(): number {
 }
 
 function getQuotaCooldownMs(): number {
-  const raw = Number(process.env.FIRESTORE_QUOTA_COOLDOWN_SECONDS || 300);
-  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 300000;
+  const raw = Number(process.env.FIRESTORE_QUOTA_COOLDOWN_SECONDS || 900);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 900000;
   return Math.min(3600, Math.max(60, raw)) * 1000;
 }
 
 function getFirestoreRetryAttempts(): number {
-  const raw = Number(process.env.FIRESTORE_RETRY_ATTEMPTS || 2);
-  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 2;
-  return Math.min(5, Math.max(0, raw));
+  const raw = Number(process.env.FIRESTORE_RETRY_ATTEMPTS || 1);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 1;
+  return Math.min(3, Math.max(0, raw));
 }
 
 function getFirestoreRetryDelayMs(): number {
-  const raw = Number(process.env.FIRESTORE_RETRY_DELAY_MS || 1000);
-  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 1000;
-  return Math.min(10000, Math.max(100, raw));
+  const raw = Number(process.env.FIRESTORE_RETRY_DELAY_MS || 2000);
+  if (!Number.isFinite(raw) || Number.isNaN(raw)) return 2000;
+  return Math.min(30000, Math.max(500, raw));
+}
+
+function getExponentialBackoffMs(attempt: number, baseDelayMs: number): number {
+  const exponentialDelay = baseDelayMs * Math.pow(2, Math.max(0, attempt - 1));
+  const jitter = Math.random() * 0.1 * exponentialDelay;
+  return Math.min(exponentialDelay + jitter, 60000);
 }
 
 function isQuotaError(error: unknown): boolean {
@@ -209,10 +215,11 @@ export async function runFirestoreOperation<T = any>(
       const canRetry = retryOnTransient && transient && attempt <= retryAttempts;
 
       if (canRetry) {
+        const backoffMs = getExponentialBackoffMs(attempt, retryDelayMs);
         Logger.warn(
-          `[Firestore] Operasi ${operation} gagal pada attempt ${attempt} karena error transient: ${String(error)}. Mencoba lagi dalam ${retryDelayMs} ms...`,
+          `[Firestore] Operasi ${operation} gagal pada attempt ${attempt} karena error transient: ${String(error)}. Mencoba lagi dalam ${backoffMs} ms...`,
         );
-        await sleep(retryDelayMs);
+        await sleep(backoffMs);
         continue;
       }
 
